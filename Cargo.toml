@@ -1,0 +1,23 @@
+[package]
+name = "em_disco"
+version = "0.1.0"
+edition = "2021"
+license-file="LICENSE"
+repository="https://github.com/EmergenceSystem/em_disco"
+description="em_disco is a discovery service designed to facilitate the efficient identification and interaction with network services"
+
+[profile.dev]
+opt-level = 3
+
+[profile.release]
+opt-level = 3 
+
+[dependencies]
+embryo = { git = "ssh://git@github.com/EmergenceSystem/Embryo.git" }
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0"
+actix-web="4.0"
+tokio = { version = "1", features = ["full"] }
+reqwest="0.11"
+lazy_static = "1.4.0"
