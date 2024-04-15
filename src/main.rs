@@ -68,7 +68,7 @@ async fn call_filter(
     reqwest::Client::new()
     .post(&filter_url)
     .header(reqwest::header::CONTENT_TYPE, "application/json")
-    .body(format!("{{\"name\":\"search\",\"value\":\"{}\"}}", body))
+    .body(format!("{{\"value\":\"{}\"}}", body))
     .send())
         .await;
 
@@ -137,8 +137,8 @@ fn merge_lists(mut uri_list: Vec<Embryo>, other_list: Vec<Embryo>) -> Vec<Embryo
     let result: Vec<_> = uri_list
         .into_iter()
         .filter(|embryo| {
-            let has_duplicate_url = embryo.properties.iter().any(|pair| {
-                pair.name == "url" && !added_elements.insert(pair.value.clone())
+            let has_duplicate_url = embryo.properties.iter().any(|(name, value)| {
+                name == "url" && !added_elements.insert(value.clone())
             });
 
             !has_duplicate_url
