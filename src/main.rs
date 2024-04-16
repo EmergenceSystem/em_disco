@@ -69,7 +69,7 @@ async fn call_filter(
     reqwest::Client::new()
     .post(&filter_url)
     .header(reqwest::header::CONTENT_TYPE, "application/json")
-    .body(format!("{{\"value\":\"{}\",\"timeout\":\"{}\"}}", body, TIMEOUT))
+    .body(format!("{{\"value\":\"{}\",\"timeout\":\"{}\"}}", body, TIMEOUT - 1))
     .send())
         .await;
 
