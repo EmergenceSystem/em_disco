@@ -7,7 +7,8 @@ use tokio::time::timeout;
 use lazy_static::lazy_static;
 use embryo::{Embryo, EmbryoList};
 
-static MAX_RESPONSE:i32 = 15;
+const MAX_RESPONSE:i32 = 10;
+const TIMEOUT:u64 = 15;
 
 #[derive(Deserialize)]
 struct FilterInfo {
@@ -64,11 +65,11 @@ async fn call_filter(
 
     println!("Called filter {}", filter_url);
 
-    let result = timeout(Duration::from_secs(5),
+    let result = timeout(Duration::from_secs(TIMEOUT),
     reqwest::Client::new()
     .post(&filter_url)
     .header(reqwest::header::CONTENT_TYPE, "application/json")
-    .body(format!("{{\"value\":\"{}\"}}", body))
+    .body(format!("{{\"value\":\"{}\",\"timeout\":\"{}\"}}", body, TIMEOUT))
     .send())
         .await;
 
