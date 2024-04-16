@@ -7,7 +7,7 @@ use tokio::time::timeout;
 use lazy_static::lazy_static;
 use embryo::{Embryo, EmbryoList};
 
-static MAX_RESPONSE:i32 = 5;
+static MAX_RESPONSE:i32 = 15;
 
 #[derive(Deserialize)]
 struct FilterInfo {
