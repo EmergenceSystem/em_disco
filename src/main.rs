@@ -60,24 +60,30 @@ async fn call_filter(
     filter_url: String,
     body: String,
     sender: mpsc::Sender<EmbryoList>,
-) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error>> {
     let start_time = Instant::now();
 
     println!("Called filter {}", filter_url);
 
-    let result = timeout(Duration::from_secs(TIMEOUT),
+    let result = match timeout(Duration::from_secs(TIMEOUT),
     reqwest::Client::new()
     .post(&filter_url)
     .header(reqwest::header::CONTENT_TYPE, "application/json")
     .body(format!("{{\"value\":\"{}\",\"timeout\":\"{}\"}}", body, TIMEOUT - 1))
     .send())
-        .await;
+        .await {
+            Ok(res) => res,
+            Err(err) => {
+                eprintln!("Failed to send HTTP request to {} : \n\t{}", filter_url, err);
+                return Ok(());
+            }
+        };
 
     match result {
         Ok(res) => {
             println!("Filter request completed in {:?}", start_time.elapsed());
 
-            let body = res?.text().await?.to_string();
+            let body = res.text().await?.to_string();
 
             let filter_response: EmbryoList = serde_json::from_str(&body)?;
             sender.send(filter_response).await.unwrap_or_else(|err| {
@@ -85,7 +91,9 @@ async fn call_filter(
             });
         }
         Err(err) => {
-            eprintln!("Error calling filter: {:?}", err);
+            eprintln!("Error calling filter thus removing this filter {} : {}", filter_url, err);
+            // unregister
+            FilterRegistry::unregister_filter(&filter_url).await;
         }
     }
 
@@ -96,33 +104,36 @@ async fn call_filter(
 async fn aggregate_handler(body: String) -> impl Responder {
     let mut tasks = Vec::new();
     let mut completed_tasks = 0;
+    let mut aggregated_list = Vec::new();
 
     let filter_urls = {
         FilterRegistry::get_instance().lock().await.iter().cloned().collect::<Vec<String>>()
     };
 
-    let (sender, mut receiver) = mpsc::channel::<EmbryoList>(filter_urls.len());
+    if filter_urls.len() > 0 {
 
-    for url in filter_urls {
-        tasks.push(Box::pin(call_filter(url.clone(), body.clone(), sender.clone())));
-    }
+        let (sender, mut receiver) = mpsc::channel::<EmbryoList>(filter_urls.len());
 
-    // wait for all tasks
-    for task in tasks {
-        task.await.unwrap_or_default();
-    }
-
-    drop(sender); // close channel
-
-    let mut aggregated_list = Vec::new();
-
-    while let Some(result) = receiver.recv().await {
-        completed_tasks += 1;
-        aggregated_list = merge_lists(aggregated_list, result.embryo_list);
-
-        if completed_tasks >= MAX_RESPONSE {
-            break;
+        for url in filter_urls {
+            tasks.push(Box::pin(call_filter(url.clone(), body.clone(), sender.clone())));
         }
+
+        // wait for all tasks
+        for task in tasks {
+            task.await.unwrap_or_default();
+        }
+
+        drop(sender); // close channel
+
+        while let Some(result) = receiver.recv().await {
+            completed_tasks += 1;
+            aggregated_list = merge_lists(aggregated_list, result.embryo_list);
+
+            if completed_tasks >= MAX_RESPONSE {
+                break;
+            }
+        }
+
     }
 
     let res = EmbryoList { embryo_list: aggregated_list };
