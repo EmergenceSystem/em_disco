@@ -1,13 +1,14 @@
 use actix_web::{post, HttpResponse, Responder, web};
+use actix_web::http::StatusCode;
 use std::collections::{HashSet};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::Mutex;
+use tokio::time::timeout;
 use serde::Deserialize;
 use std::time::{Duration, Instant};
-use tokio::time::timeout;
 use lazy_static::lazy_static;
-use embryo::{Embryo, EmbryoList};
+use serde_json::Value;
+use embryo::EmbryoList;
 
-const MAX_RESPONSE:i32 = 10;
 const TIMEOUT:u64 = 15;
 
 #[derive(Deserialize)]
@@ -59,8 +60,9 @@ async fn unregister_filter(info: web::Json<FilterInfo>) -> impl Responder {
 async fn call_filter(
     filter_url: String,
     body: String,
-    sender: mpsc::Sender<EmbryoList>,
+    embox_url: String
     ) -> Result<(), Box<dyn std::error::Error>> {
+
     let start_time = Instant::now();
 
     println!("Called filter {}", filter_url);
@@ -86,9 +88,23 @@ async fn call_filter(
             let body = res.text().await?.to_string();
 
             let filter_response: EmbryoList = serde_json::from_str(&body)?;
-            sender.send(filter_response).await.unwrap_or_else(|err| {
-                eprintln!("Error sending filter response to channel: {:?}", err);
-            });
+            let filter_response_json = match serde_json::to_string(&filter_response) {
+                Ok(json) => json,
+                Err(err) => {
+                    eprintln!("Failed to serialize filter response to JSON: {}", err);
+                    String::new()
+                }
+            };
+
+            match reqwest::Client::new()
+                .post(&embox_url)
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .body(filter_response_json)
+                .send()
+                .await {
+                    Ok(_) => println!("Send to Embox {}: ok", embox_url),
+                    Err(err) => println!("Error to send to Embox {} {:?}", embox_url, err),
+                }
         }
         Err(err) => {
             eprintln!("Error calling filter thus removing this filter {} : {}", filter_url, err);
@@ -100,64 +116,40 @@ async fn call_filter(
     Ok(())
 }
 
+
 #[post("/query")]
 async fn aggregate_handler(body: String) -> impl Responder {
-    let mut tasks = Vec::new();
-    let mut completed_tasks = 0;
-    let mut aggregated_list = Vec::new();
+    let json_value: Value = match serde_json::from_str(&body) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("Failed to deserialize JSON: {}", err);
+            Value::Null
+        }
+    };
+    let query = json_value
+        .get("query")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_default();
+    let embox_url = json_value
+        .get("embox_url")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_default();
 
     let filter_urls = {
         FilterRegistry::get_instance().lock().await.iter().cloned().collect::<Vec<String>>()
     };
 
-    if filter_urls.len() > 0 {
-
-        let (sender, mut receiver) = mpsc::channel::<EmbryoList>(filter_urls.len());
-
-        for url in filter_urls {
-            tasks.push(Box::pin(call_filter(url.clone(), body.clone(), sender.clone())));
-        }
-
-        // wait for all tasks
-        for task in tasks {
-            task.await.unwrap_or_default();
-        }
-
-        drop(sender); // close channel
-
-        while let Some(result) = receiver.recv().await {
-            completed_tasks += 1;
-            aggregated_list = merge_lists(aggregated_list, result.embryo_list);
-
-            if completed_tasks >= MAX_RESPONSE {
-                break;
+    tokio::spawn(async move {
+        if !filter_urls.is_empty() {
+            for url in filter_urls {
+                let _ = call_filter(url.clone(), query.to_string(), embox_url.to_string()).await;
             }
         }
+    });
 
-    }
-
-    let res = EmbryoList { embryo_list: aggregated_list };
-
-    HttpResponse::Ok().json(res)
-}
-
-fn merge_lists(mut uri_list: Vec<Embryo>, other_list: Vec<Embryo>) -> Vec<Embryo> {
-    uri_list.extend(other_list);
-
-    let mut added_elements = HashSet::new();
-
-    let result: Vec<_> = uri_list
-        .into_iter()
-        .filter(|embryo| {
-            let has_duplicate_url = embryo.properties.iter().any(|(name, value)| {
-                name == "url" && !added_elements.insert(value.clone())
-            });
-
-            !has_duplicate_url
-        })
-    .collect();
-
-    result
+    HttpResponse::build(StatusCode::OK).finish()
 }
 
 #[actix_web::main]
