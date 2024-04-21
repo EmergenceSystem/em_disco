@@ -5,10 +5,9 @@ use serde::Deserialize;
 use std::time::{Duration, Instant};
 use tokio::time::timeout;
 use lazy_static::lazy_static;
-use embryo::{Embryo, EmbryoList};
+use embryo::EmbryoList;
 
-const MAX_RESPONSE:i32 = 10;
-const TIMEOUT:u64 = 15;
+const TIMEOUT:u64 = 10;
 
 #[derive(Deserialize)]
 struct FilterInfo {
@@ -102,62 +101,44 @@ async fn call_filter(
 
 #[post("/query")]
 async fn aggregate_handler(body: String) -> impl Responder {
-    let mut tasks = Vec::new();
-    let mut completed_tasks = 0;
-    let mut aggregated_list = Vec::new();
-
     let filter_urls = {
         FilterRegistry::get_instance().lock().await.iter().cloned().collect::<Vec<String>>()
     };
 
-    if filter_urls.len() > 0 {
+    let mut tasks = Vec::new();
 
-        let (sender, mut receiver) = mpsc::channel::<EmbryoList>(filter_urls.len());
-
-        for url in filter_urls {
-            tasks.push(Box::pin(call_filter(url.clone(), body.clone(), sender.clone())));
-        }
-
-        // wait for all tasks
-        for task in tasks {
-            task.await.unwrap_or_default();
-        }
-
-        drop(sender); // close channel
-
-        while let Some(result) = receiver.recv().await {
-            completed_tasks += 1;
-            aggregated_list = merge_lists(aggregated_list, result.embryo_list);
-
-            if completed_tasks >= MAX_RESPONSE {
-                break;
-            }
-        }
-
+    // Create channels for each filter URL
+    let mut receivers = Vec::new();
+    for url in filter_urls {
+        let (sender, receiver) = mpsc::channel::<EmbryoList>(1);
+        receivers.push(receiver);
+        tasks.push(call_filter(url, body.clone(), sender));
     }
 
-    let res = EmbryoList { embryo_list: aggregated_list };
+    // Wait for all tasks to finish
+    for task in tasks {
+        tokio::spawn(async move {
+            task.await.unwrap_or_default();
+        });
+    }
 
-    HttpResponse::Ok().json(res)
-}
+    // Aggregate results
+    let mut aggregated_list = Vec::new();
+    for mut receiver in receivers {
+        tokio::select! {
+            result = receiver.recv() => {
+                if let Some(result) = result {
+                    aggregated_list = embryo::merge_lists_by_url(aggregated_list, result.embryo_list);
+                }
+            }
+            _ = tokio::time::sleep(Duration::from_secs(TIMEOUT)) => {
+                // Handle timeout
+                println!("Timeout occurred while waiting for filter response");
+            }
+        }
+    }
 
-fn merge_lists(mut uri_list: Vec<Embryo>, other_list: Vec<Embryo>) -> Vec<Embryo> {
-    uri_list.extend(other_list);
-
-    let mut added_elements = HashSet::new();
-
-    let result: Vec<_> = uri_list
-        .into_iter()
-        .filter(|embryo| {
-            let has_duplicate_url = embryo.properties.iter().any(|(name, value)| {
-                name == "url" && !added_elements.insert(value.clone())
-            });
-
-            !has_duplicate_url
-        })
-    .collect();
-
-    result
+    HttpResponse::Ok().json(EmbryoList { embryo_list: aggregated_list })
 }
 
 #[actix_web::main]
