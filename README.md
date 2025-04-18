@@ -1,2 +1,9 @@
-# em_disco
-em_disco is a discovery service designed to facilitate the efficient identification and interaction with network services
+em_disco
+=====
+
+An OTP application
+
+Build
+-----
+
+    $ rebar3 compile

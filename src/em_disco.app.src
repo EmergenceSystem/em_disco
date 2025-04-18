@@ -1,0 +1,18 @@
+{application, em_disco, [
+    {description, "Discovery service for filters (Embryo)"},
+    {vsn, "0.1.0"},
+    {registered, []},
+    {mod, {em_disco_app, []}},
+    {applications, [
+        kernel,
+        stdlib,
+        inets,
+        cowboy,
+        jsx,
+        embryo
+    ]},
+    {env, []},
+    {modules, []},
+    {licenses, ["Apache 2.0"]},
+    {links, []}
+]}.
