@@ -6,24 +6,22 @@
     unregister_filter/1,
     query/1, 
     add_discovery_source/1, 
-    remove_discovery_source/1
+    remove_discovery_source/1,
+    discover_filters/0
 ]).
 
 -include_lib("embryo/src/embryo.hrl").
 
--define(TIMEOUT, 10000). % 10 seconds in milliseconds
--define(DISCOVERY_INTERVAL, 60000). % Run discovery every 60 seconds
+-define(TIMEOUT, 10000).
+-define(DISCOVERY_INTERVAL, 120000).
 
 %%% API Functions
 
 start() ->
     io:format("[INFO] Starting em_disco application...~n"),
     application:ensure_all_started(em_disco),
-    % Create ETS table for discovered filters
     ets:new(filter_registry, [set, public, named_table]),
-    % Create ETS table for discovery sources
     ets:new(discovery_sources, [set, public, named_table]),
-    % Start the discovery process
     spawn(fun() -> discovery_loop() end),
     io:format("[SUCCESS] em_disco application started with automatic filter discovery.~n"),
     ok.
@@ -34,14 +32,12 @@ stop() ->
     io:format("[SUCCESS] em_disco application stopped.~n"),
     ok.
 
-% Maintained for backward compatibility
 register_filter(Url) when is_binary(Url) ->
     io:format("[INFO] Registering filter (legacy method): ~p~n", [Url]),
     ets:insert(filter_registry, {Url, true}),
     io:format("[SUCCESS] Filter registered: ~p~n", [Url]),
     ok.
 
-% Maintained for backward compatibility
 unregister_filter(Url) when is_binary(Url) ->
     io:format("[INFO] Unregistering filter (legacy method): ~p~n", [Url]),
     ets:delete(filter_registry, Url),
@@ -69,8 +65,6 @@ query(Body) ->
     MergedResults = merge_lists_by_url(Results),
     MergedResults.
 
-%%% Internal functions
-
 discovery_loop() ->
     discover_filters(),
     timer:sleep(?DISCOVERY_INTERVAL),
@@ -80,16 +74,74 @@ discover_filters() ->
     io:format("[INFO] Running filter discovery...~n"),
     Sources = get_discovery_sources(),
     
-    % Don't clear old filters to maintain manually registered ones
-    % Instead, we'll just add newly discovered ones
-    
-    % Discover filters from each source
     lists:foreach(fun(Source) ->
         discover_from_source(Source)
     end, Sources),
+
+    discover_local_erlang_nodes(),
     
     io:format("[INFO] Filter discovery completed. Current filters: ~p~n", [get_filter_urls()]),
     ok.
+
+discover_local_erlang_nodes() ->
+    io:format("[INFO] Discovering local Erlang nodes responding to HTTP...~n"),
+    % Configuration parameters
+    BaseUrl = "http://localhost:",
+    TestValue = <<"test">>,
+    Ports = get_potential_erlang_ports(),
+    
+    % Check each port
+    lists:foreach(
+    fun(Port) ->
+        spawn(fun() ->
+            Url = list_to_binary(BaseUrl ++ integer_to_list(Port) ++ "/query"),
+            case try_call_filter(Url, TestValue) of
+                {ok, _} ->
+                    io:format("[INFO] Found Erlang node responding at: ~s~n", [Url]),
+                    register_filter(Url);
+                {error, _Reason} ->
+                    ok % Node not responding correctly, skip registration
+            end
+        end)
+    end, Ports),
+    ok.
+
+% Try to call a potential filter using the same method as call_filter
+try_call_filter(Url, RequestBody) ->
+    StartTime = erlang:system_time(millisecond),
+    io:format("[INFO] Testing potential filter ~p with body ~p~n", [Url, RequestBody]),
+    
+    UrlStr = binary_to_list(Url),
+    TimeoutStr = integer_to_binary(?TIMEOUT),
+    JsonBody = jsx:encode(#{
+        <<"value">> => RequestBody,
+        <<"timeout">> => TimeoutStr
+    }),
+    
+    Headers = [{"content-type", "application/json"}],
+    HttpOptions = [{timeout, ?TIMEOUT}, {connect_timeout, ?TIMEOUT}],
+    
+    try
+        case httpc:request(post, {UrlStr, Headers, "application/json", JsonBody}, HttpOptions, []) of
+            {ok, {{_, 200, _}, _RespHeaders, ResponseBody}} ->
+                ElapsedTime = erlang:system_time(millisecond) - StartTime,
+                io:format("[SUCCESS] Potential filter ~p responded in ~p ms.~n", [UrlStr, ElapsedTime]),
+                {ok, ResponseBody};
+            {ok, {{_, StatusCode, _}, _, _}} ->
+                io:format("[DEBUG] Potential filter ~p returned HTTP status code ~p.~n", [UrlStr, StatusCode]),
+                {error, {bad_status_code, StatusCode}};
+            {error, Reason} ->
+                {error, Reason}
+        end
+    catch
+        E:R:_ ->
+            {error, {exception, {E, R}}}
+    end.
+
+% Get list of potential ports where Erlang nodes might be running
+get_potential_erlang_ports() ->
+    Range = lists:seq(8081, 8100),
+    Range.
 
 get_discovery_sources() ->
     case ets:info(discovery_sources) of
@@ -110,7 +162,7 @@ discover_from_source(Source) ->
             {ok, {{_, 200, _}, _, ResponseBody}} ->
                 Filters = parse_discovery_response(ResponseBody),
                 lists:foreach(fun(FilterUrl) ->
-                    register_discovered_filter(FilterUrl)
+                    register_filter(FilterUrl)
                 end, Filters);
             {ok, {{_, StatusCode, _}, _, _}} ->
                 io:format("[ERROR] Discovery source ~p returned HTTP status code ~p.~n", [SourceStr, StatusCode]);
@@ -154,33 +206,6 @@ extract_filter_urls_from_text(ResponseBody) ->
         end
     catch
         _:_ -> []
-    end.
-
-register_discovered_filter(Url) when is_binary(Url) ->
-    % Check if filter is alive before registering
-    case check_filter_health(Url) of
-        true ->
-            io:format("[INFO] Registering discovered filter: ~p~n", [Url]),
-            ets:insert(filter_registry, {Url, true}),
-            io:format("[SUCCESS] Filter registered: ~p~n", [Url]);
-        false ->
-            io:format("[WARN] Skipping unresponsive filter: ~p~n", [Url])
-    end,
-    ok.
-
-check_filter_health(Url) ->
-    try
-        UrlStr = binary_to_list(Url),
-        HttpOptions = [{timeout, 3000}, {connect_timeout, 3000}],
-        
-        case httpc:request(head, {UrlStr, []}, HttpOptions, []) of
-            {ok, {{_, StatusCode, _}, _, _}} when StatusCode >= 200, StatusCode < 300 ->
-                true;
-            _ ->
-                false
-        end
-    catch
-        _:_ -> false
     end.
 
 get_filter_urls() ->
