@@ -24,7 +24,7 @@ init([]) ->
     
     % Start Cowboy
     {ok, _} = cowboy:start_clear(em_disco_http_listener, 
-        [{port, 8080}],
+        [{ip, {0,0,0,0}}, {port, 8080}],
         #{env => #{dispatch => Dispatch}}
     ),
     
