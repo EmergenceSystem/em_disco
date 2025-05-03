@@ -12,7 +12,7 @@
 
 -include_lib("embryo/src/embryo.hrl").
 
--define(TIMEOUT, 10000).
+-define(TIMEOUT, 30000).
 -define(DISCOVERY_INTERVAL, 120000).
 
 %%% API Functions
