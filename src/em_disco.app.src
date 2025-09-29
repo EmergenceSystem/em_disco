@@ -7,7 +7,7 @@
         kernel,
         stdlib,
         inets,
-        cowboy,
+        wade,
         jsx,
         embryo
     ]},
