@@ -8,73 +8,93 @@
 %% ============================================================================
 
 handle_register(Req) ->
-    io:format("handle_register called with Req: ~p~n", [Req]),
     try
-        RawBody = get_body(Req),
-        io:format("RawBody: ~p~n", [RawBody]),
-        FilterInfo = jsx:decode(RawBody, [return_maps]),
-        io:format("FilterInfo: ~p~n", [FilterInfo]),
+        Body = Req#req.body,
+        
+        %% Body is already a map (parsed by Wade), no need to decode
+        FilterInfo = case Body of
+            M when is_map(M) -> M;
+            B when is_binary(B) -> jsx:decode(B, [return_maps]);
+            B when is_list(B) -> jsx:decode(list_to_binary(B), [return_maps]);
+            _ -> #{}
+        end,
+        
         Url = maps:get(<<"url">>, FilterInfo),
         em_disco:register_filter(Url),
-        %% Return a tuple compatible with send_response/4: {Status, Body, Headers}
+        
         {200, jsx:encode(#{<<"status">> => <<"registered">>}), [
             {"Content-Type", "application/json"},
-            {"Connection", "close"}  %% Force connection close
+            {"Connection", "close"}
         ]}
     catch
         Error:Reason ->
             io:format("Error in handle_register: ~p:~p~n", [Error, Reason]),
             {400, jsx:encode(#{<<"error">> => <<"Invalid request">>}), [
                 {"Content-Type", "application/json"},
-                {"Connection", "close"}  %% Force connection close
+                {"Connection", "close"}
             ]}
     end.
 
 handle_unregister(Req) ->
     try
-        RawBody = get_body(Req),
-        FilterInfo = jsx:decode(RawBody, [return_maps]),
+        Body = Req#req.body,
+        
+        %% Body is already a map (parsed by Wade)
+        FilterInfo = case Body of
+            M when is_map(M) -> M;
+            B when is_binary(B) -> jsx:decode(B, [return_maps]);
+            B when is_list(B) -> jsx:decode(list_to_binary(B), [return_maps]);
+            _ -> #{}
+        end,
+        
         Url = maps:get(<<"url">>, FilterInfo),
         em_disco:unregister_filter(Url),
+        
         {200, jsx:encode(#{<<"status">> => <<"unregistered">>}), [
             {"Content-Type", "application/json"},
-            {"Connection", "close"}  %% Force connection close
+            {"Connection", "close"}
         ]}
     catch
         Error:Reason ->
             io:format("Error in handle_unregister: ~p:~p~n", [Error, Reason]),
             {400, jsx:encode(#{<<"error">> => <<"Invalid request">>}), [
                 {"Content-Type", "application/json"},
-                {"Connection", "close"}  %% Force connection close
+                {"Connection", "close"}
             ]}
     end.
 
 handle_query(Req) ->
     try
-        RawBody = get_body(Req),
-        AggregatedList = em_disco:query(RawBody),
+        Body = Req#req.body,
+        
+        %% Extract the query value and convert it to binary for em_disco:query
+        QueryValue = case Body of
+            M when is_map(M) ->
+                %% Get the "value" or "query" field
+                case maps:get(<<"value">>, M, undefined) of
+                    undefined -> maps:get(<<"query">>, M, <<>>);
+                    V -> V
+                end;
+            B when is_binary(B) -> B;
+            B when is_list(B) -> list_to_binary(B);
+            _ -> <<>>
+        end,
+        
+        io:format("Querying with value: ~p~n", [QueryValue]),
+        
+        %% em_disco:query expects a binary string, not a map
+        AggregatedList = em_disco:query(QueryValue),
         Response = jsx:encode(#{<<"embryo_list">> => AggregatedList}),
+        
         {200, Response, [
             {"Content-Type", "application/json"},
-            {"Connection", "close"}  %% Force connection close
+            {"Connection", "close"}
         ]}
     catch
-        Error:Reason ->
-            io:format("Error in handle_query: ~p:~p~n", [Error, Reason]),
+        Error:Reason:Stack ->
+            io:format("Error in handle_query: ~p:~p~nStack: ~p~n", [Error, Reason, Stack]),
             {500, jsx:encode(#{<<"error">> => <<"Query failed">>}), [
                 {"Content-Type", "application/json"},
-                {"Connection", "close"}  %% Force connection close
+                {"Connection", "close"}
             ]}
     end.
-
-%% ============================================================================
-%% Internal Functions
-%% ============================================================================
-
-get_body(Req) ->
-    case Req#req.body of
-        undefined -> <<"{}">>;
-        Body when is_list(Body) -> list_to_binary(Body);
-        Body when is_binary(Body) -> Body
-    end.
-
