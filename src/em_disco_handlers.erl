@@ -1,148 +1,96 @@
 %%%-------------------------------------------------------------------
-%%% @doc HTTP handlers for Emquest Disco routes
+%%% @doc
+%%% WebSocket Handler for em_filter Connections
+%%%
+%%% Each `em_filter' instance opens a persistent WebSocket connection
+%%% to this handler on startup. The handler is responsible for:
+%%%
+%%% <ul>
+%%%   <li>Registering the filter in the `filter_registry' ETS table.</li>
+%%%   <li>Forwarding query payloads sent by `em_disco:query/1'.</li>
+%%%   <li>Routing results back to the waiting caller process.</li>
+%%%   <li>Cleaning up the registry on disconnect.</li>
+%%% </ul>
+%%%
+%%% === Message Protocol (JSON over WebSocket) ===
+%%%
+%%% Filter → Disco:
+%%% ```
+%%%   { "action": "register", "name": "<filter_name>" }
+%%%   { "action": "result",   "id": "<query_id>", "data": <r> }
+%%% '''
+%%%
+%%% Disco → Filter:
+%%% ```
+%%%   { "action": "query",  "id": "<query_id>", "body": "<query_body>" }
+%%%   { "status": "ok",     "action": "registered" }
+%%% '''
+%%%
+%%% === Internal Erlang Messages ===
+%%%
+%%% `em_disco:query/1' sends `{send, Payload}' to every registered
+%%% handler pid. The handler forwards it to the filter as a WS text frame.
+%%%
+%%% @author Steve Roques
+%%% @end
 %%%-------------------------------------------------------------------
 -module(em_disco_handlers).
--export([handle_register/1, handle_unregister/1, handle_query/1]).
+-behaviour(cowboy_websocket).
 
--include_lib("wade/include/wade.hrl").
+-export([init/2, websocket_init/1, websocket_handle/2, websocket_info/2, terminate/3]).
 
-%% ============================================================================
-%% Helper function: normalize_body/1
-%% Converts different body formats (map, proplist, binary JSON) into a map
-%% Returns empty map if the body is invalid.
-%% ============================================================================
-normalize_body(Body) ->
-    case Body of
-        %% Already a map
-        M when is_map(M) ->
-            M;
+-record(ws_state, {
+    filter_name = undefined :: binary() | undefined
+}).
 
-        %% Proplist: [{key, val}, ...] -> convert to map with binary keys
-        List when is_list(List) ->
-            maps:from_list(
-                [ { 
-                    case K of
-                        A when is_atom(A) -> atom_to_binary(A, utf8);
-                        B when is_binary(B) -> B;
-                        _ -> list_to_binary(io_lib:format("~p",[K]))
-                    end,
-                    case V of
-                        Bin when is_binary(Bin) -> Bin;
-                        L when is_list(L) -> list_to_binary(L);
-                        Other -> list_to_binary(io_lib:format("~p",[Other]))
-                    end
-                  } 
-                  || {K,V} <- List ]
-            );
+init(Req, _Opts) ->
+    {cowboy_websocket, Req, #ws_state{}, #{idle_timeout => infinity}}.
 
-        %% Binary JSON -> decode to map
-        Bin when is_binary(Bin) ->
-            case catch jsx:decode(Bin, [return_maps]) of
-                {'EXIT', _} -> #{};
-                Decoded -> Decoded
-            end;
+websocket_init(State) ->
+    {ok, State}.
 
-        _ -> 
-            % Unknown format
-            #{}
-    end.
+websocket_handle({text, Data}, State) ->
+    case json:decode(Data) of
 
-%% ============================================================================
-%% Handle POST /register
-%% Expects body with "url" key (JSON or form-data)
-%% ============================================================================
-handle_register(Req) ->
-    try
-        Body = Req#req.body,
-        FilterInfo = normalize_body(Body),
-        Url = maps:get(<<"url">>, FilterInfo, undefined),
-        case Url of
-            undefined ->
-                {400, jsx:encode(#{<<"error">> => <<"Missing 'url' key">>}), [
-                    {"Content-Type", "application/json"},
-                    {"Connection", "close"}
-                ]};
-            _ ->
-                em_disco:register_filter(Url),
-                {200, jsx:encode(#{<<"status">> => <<"registered">>}), [
-                    {"Content-Type", "application/json"},
-                    {"Connection", "close"}
-                ]}
-        end
-    catch
-        _:_ ->
-            {400, jsx:encode(#{<<"error">> => <<"Invalid request">>}), [
-                {"Content-Type", "application/json"},
-                {"Connection", "close"}
-            ]}
-    end.
+        #{<<"action">> := <<"register">>, <<"name">> := Name} ->
+            ets:insert(filter_registry, {Name, self()}),
+            io:format("[disco] Filter registered: ~s~n", [Name]),
+            Reply = json:encode(#{
+                <<"status">> => <<"ok">>,
+                <<"action">> => <<"registered">>
+            }),
+            {reply, {text, Reply}, State#ws_state{filter_name = Name}};
 
-%% ============================================================================
-%% Handle POST /unregister
-%% Expects body with "url" key (JSON or form-data)
-%% ============================================================================
-handle_unregister(Req) ->
-    try
-        Body = Req#req.body,
-        FilterInfo = normalize_body(Body),
-        Url = maps:get(<<"url">>, FilterInfo, undefined),
-        case Url of
-            undefined ->
-                {400, jsx:encode(#{<<"error">> => <<"Missing 'url' key">>}), [
-                    {"Content-Type", "application/json"},
-                    {"Connection", "close"}
-                ]};
-            _ ->
-                em_disco:unregister_filter(Url),
-                {200, jsx:encode(#{<<"status">> => <<"unregistered">>}), [
-                    {"Content-Type", "application/json"},
-                    {"Connection", "close"}
-                ]}
-        end
-    catch
-        _:_ ->
-            {400, jsx:encode(#{<<"error">> => <<"Invalid request">>}), [
-                {"Content-Type", "application/json"},
-                {"Connection", "close"}
-            ]}
-    end.
+        #{<<"action">> := <<"result">>, <<"id">> := Id, <<"data">> := Result} ->
+            case ets:lookup(pending_queries, Id) of
+                [{Id, CallerPid}] ->
+                    io:format("[disco] Forwarding result to caller ~p~n", [CallerPid]),
+                    CallerPid ! {query_result, Id, Result},
+                    ets:delete(pending_queries, Id);
+                [] ->
+                    io:format("[disco] No pending caller for query ~s (already timed out?)~n", [Id])
+            end,
+            {ok, State};
 
-%% ============================================================================
-%% Handle POST /query
-%% Expects body with "value" or "query" key (JSON or form-data)
-%% Forwards query to em_disco:query as binary
-%% ============================================================================
-handle_query(Req) ->
-    try
-        Body = Req#req.body,
-        Normalized = normalize_body(Body),
+        _ ->
+            io:format("[disco] Unknown WS message from filter ~p~n",
+                      [State#ws_state.filter_name]),
+            Reply = json:encode(#{<<"error">> => <<"unknown_action">>}),
+            {reply, {text, Reply}, State}
+    end;
 
-        %% Extract the "value" or "query" key, fallback to empty binary
-        QueryValue = case maps:get(<<"value">>, Normalized, undefined) of
-            undefined -> maps:get(<<"query">>, Normalized, <<>>);
-            V -> V
-        end,
+websocket_handle(_Frame, State) ->
+    {ok, State}.
 
-        %% Ensure it's binary
-        QueryBin = case QueryValue of
-            B when is_binary(B) -> B;
-            L when is_list(L) -> list_to_binary(L);
-            Other -> list_to_binary(io_lib:format("~p", [Other]))
-        end,
+websocket_info({send, Data}, State) ->
+    {reply, {text, Data}, State};
 
-        %% Call em_disco:query
-        AggregatedList = em_disco:query(QueryBin),
-        Response = jsx:encode(#{<<"embryo_list">> => AggregatedList}),
+websocket_info(_Info, State) ->
+    {ok, State}.
 
-        {200, Response, [
-            {"Content-Type", "application/json"},
-            {"Connection", "close"}
-        ]}
-    catch
-        _:_ ->
-            {500, jsx:encode(#{<<"error">> => <<"Query failed">>}), [
-                {"Content-Type", "application/json"},
-                {"Connection", "close"}
-            ]}
-    end.
-
+terminate(_Reason, _Req, #ws_state{filter_name = undefined}) ->
+    ok;
+terminate(_Reason, _Req, #ws_state{filter_name = Name}) ->
+    ets:delete(filter_registry, Name),
+    io:format("[disco] Filter disconnected: ~s~n", [Name]),
+    ok.
