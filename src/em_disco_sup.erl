@@ -2,21 +2,32 @@
 %%% @doc
 %%% em_disco Top-Level Supervisor
 %%%
-%%% Starts the Cowboy HTTP/WebSocket server and initialises the two
-%%% ETS tables used for runtime state:
+%%% Starts the Cowboy HTTP/WebSocket server and initialises the ETS
+%%% tables used for runtime state.
 %%%
-%%% <ul>
-%%%   <li>`filter_registry' — maps filter name (binary) to WS handler
-%%%       pid.</li>
-%%%   <li>`pending_queries' — maps query id (binary) to caller
-%%%       pid.</li>
-%%% </ul>
+%%% === ETS tables ===
 %%%
-%%% Two routes are registered on port 8080:
-%%% <ul>
-%%%   <li>`GET  /ws'    → `em_disco_handlers'     (WebSocket, persistent)</li>
-%%%   <li>`POST /query' → `em_disco_http_handler' (HTTP, short-lived)</li>
-%%% </ul>
+%%%   `filter_registry'  — `{Name :: binary(), Pid :: pid()}'
+%%%        Every connected node (filter or agent). Populated on
+%%%        `register', cleared on WebSocket disconnect.
+%%%
+%%%   `agent_registry'   — `{Name :: binary(), Capabilities :: [binary()],
+%%%                           ConnectedAt :: integer()}'
+%%%        Agents only. Populated on `agent_hello', cleared on
+%%%        disconnect. Plain filters never appear here.
+%%%
+%%%   `pending_queries'  — `{Id :: binary(), Pid :: pid()}'
+%%%        In-flight queries. Entries are removed when the last result
+%%%        arrives or when the collection timeout fires.
+%%%
+%%% === HTTP routes (port 8080) ===
+%%%
+%%%   `GET  /ws'       → `em_disco_handlers'          (WebSocket, persistent)
+%%%   `POST /query'    → `em_disco_http_handler'       (HTTP, short-lived)
+%%%   `GET  /registry' → `em_disco_registry_handler'   (HTTP, read-only)
+%%%
+%%% All ETS tables are owned by this supervisor process so that they
+%%% survive individual child crashes.
 %%%
 %%% @author Steve Roques
 %%% @end
@@ -38,15 +49,33 @@ start_link() ->
 
 %% @private
 init([]) ->
-    %% ETS tables are owned by this supervisor process so they survive
-    %% individual child crashes.
+    %% ── ETS tables ──────────────────────────────────────────────────
+    %%
+    %% Owned by the supervisor so they persist across worker restarts.
+
+    %% All connected nodes (filters and agents).
     ets:new(filter_registry, [set, named_table, public, {read_concurrency, true}]),
+
+    %% Agents only — nodes that sent an `agent_hello' frame.
+    %% The Queen reads this table via GET /registry to discover
+    %% available capabilities before orchestrating a swarm query.
+    ets:new(agent_registry,  [set, named_table, public, {read_concurrency, true}]),
+
+    %% In-flight queries awaiting results from connected nodes.
     ets:new(pending_queries,  [set, named_table, public]),
 
+    %% ── HTTP / WebSocket routes ──────────────────────────────────────
     Dispatch = cowboy_router:compile([
         {'_', [
-            {"/ws",    em_disco_handlers,     []},
-            {"/query", em_disco_http_handler, []}
+            %% Persistent WebSocket endpoint — filters and agents connect here.
+            {"/ws",       em_disco_handlers,          []},
+
+            %% HTTP endpoint — Emquest and other clients post queries here.
+            {"/query",    em_disco_http_handler,      []},
+
+            %% HTTP endpoint — Queen agents GET this to discover live agents
+            %% and their capabilities before orchestrating a swarm query.
+            {"/registry", em_disco_registry_handler,  []}
         ]}
     ]),
 
@@ -56,7 +85,8 @@ init([]) ->
     ),
 
     io:format("[em_disco] Started on port 8080~n"),
-    io:format("[em_disco]   WS  filters : ws://localhost:8080/ws~n"),
-    io:format("[em_disco]   HTTP queries: http://localhost:8080/query~n"),
+    io:format("[em_disco]   WS    nodes    : ws://localhost:8080/ws~n"),
+    io:format("[em_disco]   HTTP  queries  : http://localhost:8080/query~n"),
+    io:format("[em_disco]   HTTP  registry : http://localhost:8080/registry~n"),
 
     {ok, {#{strategy => one_for_one, intensity => 5, period => 10}, []}}.

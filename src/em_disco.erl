@@ -2,35 +2,20 @@
 %%% @doc
 %%% em_disco — Discovery and Query Dispatch Core
 %%%
-%%% This module is the public API of the `em_disco' application.
-%%% It manages the service lifecycle and provides the `query/1'
-%%% function that fans out a request to all connected filters and
-%%% aggregates their responses.
-%%%
-%%% === Architecture overview ===
-%%%
-%%% ```
-%%%  Emquest client
-%%%       │  POST /query  (HTTP)
-%%%       ▼
-%%%  em_disco_http_handler
-%%%       │  em_disco:query/1
-%%%       ▼
-%%%  em_disco ──── fan-out {send, Payload} ────▶ em_disco_handlers (N×)
-%%%       │                                              │ WS frame
-%%%       │                                              ▼
-%%%       │                                         em_filter (N×)
-%%%       │                                              │ WS frame
-%%%       ◀──────── {query_result, Id, Data} ───────────┘
-%%%       │  collect_results/4
-%%%       ▼
-%%%  [result, ...]  returned to HTTP caller
-%%% '''
+%%% Public API of the `em_disco' application.
+%%% Manages the service lifecycle and provides `query/1' to fan out
+%%% a request to all connected filters/agents and aggregate results.
 %%%
 %%% === ETS tables (owned by em_disco_sup) ===
 %%%
 %%%   `filter_registry'  — `{Name :: binary(), Pid :: pid()}'
-%%%   `pending_queries'  — `{Id :: binary(),   Pid :: pid()}'
+%%%        All connected nodes (filters and agents alike).
+%%%
+%%%   `agent_registry'   — `{Name :: binary(), Capabilities :: [binary()], ConnectedAt :: integer()}'
+%%%        Agents only. Populated when a node sends an `agent_hello' frame.
+%%%
+%%%   `pending_queries'  — `{Id :: binary(), Pid :: pid()}'
+%%%        In-flight queries waiting for results.
 %%%
 %%% @author Steve Roques
 %%% @end
@@ -41,7 +26,8 @@
     start/0,
     stop/0,
     query/1,
-    list_filters/0
+    list_filters/0,
+    list_agents/0
 ]).
 
 -define(QUERY_TIMEOUT_MS, 5000).
@@ -67,7 +53,10 @@ stop() ->
     io:format("[disco] em_disco stopped~n").
 
 %%--------------------------------------------------------------------
-%% @doc Fans out a query to all connected filters and collects results.
+%% @doc Fans out a query to all connected filters/agents and collects results.
+%%
+%% Every node in `filter_registry' receives the query regardless of
+%% whether it has announced agent capabilities or not.
 %% @end
 %%--------------------------------------------------------------------
 -spec query(binary()) -> list().
@@ -93,12 +82,31 @@ query(Body) ->
     end.
 
 %%--------------------------------------------------------------------
-%% @doc Returns the names of all currently connected filters.
+%% @doc Returns the names of all currently connected nodes
+%%      (both plain filters and agents).
 %% @end
 %%--------------------------------------------------------------------
 -spec list_filters() -> [binary()].
 list_filters() ->
     [Name || {Name, _Pid} <- ets:tab2list(filter_registry)].
+
+%%--------------------------------------------------------------------
+%% @doc Returns the registry entries for nodes that announced
+%%      themselves as agents via `agent_hello'.
+%%
+%% Each entry is a map with:
+%%   `name'          — binary node name
+%%   `capabilities'  — list of capability binaries
+%%   `connected_at'  — Unix timestamp (seconds) of the hello frame
+%% @end
+%%--------------------------------------------------------------------
+-spec list_agents() -> [map()].
+list_agents() ->
+    [#{
+        name          => Name,
+        capabilities  => Caps,
+        connected_at  => ConnectedAt
+    } || {Name, Caps, ConnectedAt} <- ets:tab2list(agent_registry)].
 
 %%====================================================================
 %% Internal helpers
