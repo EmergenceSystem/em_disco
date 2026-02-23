@@ -10,10 +10,6 @@
 %%% contents of the `agent_registry' ETS table, which is maintained
 %%% by `em_disco_handlers' as agents connect and disconnect.
 %%%
-%%% Plain filters (nodes that never sent `agent_hello') do not appear
-%%% here. Use `em_disco:list_filters/0' to enumerate all connected
-%%% nodes including plain filters.
-%%%
 %%% === Response format (JSON) ===
 %%% ```
 %%%   {
@@ -43,7 +39,7 @@
 %% @doc Cowboy request entry point.
 %%
 %% Reads the `agent_registry' ETS table and serialises its contents
-%% as a JSON response. No request body is consumed.
+%% as a JSON response. The internal `Pid' field is not exposed.
 %% @end
 %%--------------------------------------------------------------------
 init(Req0, State) ->
@@ -53,7 +49,7 @@ init(Req0, State) ->
             <<"capabilities">> => Caps,
             <<"connected_at">> => ConnectedAt
         }
-        || {Name, Caps, ConnectedAt} <- ets:tab2list(agent_registry)
+        || {Name, Caps, ConnectedAt, _Pid} <- ets:tab2list(agent_registry)
     ],
     Body = json:encode(#{<<"agents">> => Agents}),
     Req1 = cowboy_req:reply(200,

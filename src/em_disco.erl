@@ -4,17 +4,16 @@
 %%%
 %%% Public API of the `em_disco' application.
 %%% Manages the service lifecycle and provides `query/1' to fan out
-%%% a request to all connected filters/agents and aggregate results.
+%%% a request to all connected agents and aggregate results.
 %%%
 %%% === ETS tables (owned by em_disco_sup) ===
 %%%
-%%%   `filter_registry'  — `{Name :: binary(), Pid :: pid()}'
-%%%        All connected nodes (filters and agents alike).
+%%%   `agent_registry' — `{Name :: binary(), Caps :: [binary()],
+%%%                        ConnectedAt :: integer(), Pid :: pid()}'
+%%%        All connected agents. Populated on `agent_hello',
+%%%        cleared on WebSocket disconnect.
 %%%
-%%%   `agent_registry'   — `{Name :: binary(), Capabilities :: [binary()], ConnectedAt :: integer()}'
-%%%        Agents only. Populated when a node sends an `agent_hello' frame.
-%%%
-%%%   `pending_queries'  — `{Id :: binary(), Pid :: pid()}'
+%%%   `pending_queries' — `{Id :: binary(), Pid :: pid()}'
 %%%        In-flight queries waiting for results.
 %%%
 %%% @author Steve Roques
@@ -26,7 +25,6 @@
     start/0,
     stop/0,
     query/1,
-    list_filters/0,
     list_agents/0
 ]).
 
@@ -53,18 +51,17 @@ stop() ->
     io:format("[disco] em_disco stopped~n").
 
 %%--------------------------------------------------------------------
-%% @doc Fans out a query to all connected filters/agents and collects results.
+%% @doc Fans out a query to all connected agents and collects results.
 %%
-%% Every node in `filter_registry' receives the query regardless of
-%% whether it has announced agent capabilities or not.
+%% Every agent in `agent_registry' receives the query payload.
 %% @end
 %%--------------------------------------------------------------------
 -spec query(binary()) -> list().
 query(Body) ->
-    Filters = ets:tab2list(filter_registry),
-    case Filters of
+    Agents = ets:tab2list(agent_registry),
+    case Agents of
         [] ->
-            io:format("[disco] query received but no filters connected~n"),
+            io:format("[disco] query received but no agents connected~n"),
             [];
         _ ->
             Id      = generate_query_id(),
@@ -74,28 +71,18 @@ query(Body) ->
                 <<"body">>   => Body
             }),
             ets:insert(pending_queries, {Id, self()}),
-            lists:foreach(fun({Name, Pid}) ->
-                io:format("[disco] Dispatching query ~s to filter ~s~n", [Id, Name]),
+            lists:foreach(fun({Name, _Caps, _ConnectedAt, Pid}) ->
+                io:format("[disco] Dispatching query ~s to agent ~s~n", [Id, Name]),
                 Pid ! {send, Payload}
-            end, Filters),
-            collect_results(length(Filters), Id, ?QUERY_TIMEOUT_MS, [])
+            end, Agents),
+            collect_results(length(Agents), Id, ?QUERY_TIMEOUT_MS, [])
     end.
 
 %%--------------------------------------------------------------------
-%% @doc Returns the names of all currently connected nodes
-%%      (both plain filters and agents).
-%% @end
-%%--------------------------------------------------------------------
--spec list_filters() -> [binary()].
-list_filters() ->
-    [Name || {Name, _Pid} <- ets:tab2list(filter_registry)].
-
-%%--------------------------------------------------------------------
-%% @doc Returns the registry entries for nodes that announced
-%%      themselves as agents via `agent_hello'.
+%% @doc Returns the registry entries for all connected agents.
 %%
 %% Each entry is a map with:
-%%   `name'          — binary node name
+%%   `name'          — binary agent name
 %%   `capabilities'  — list of capability binaries
 %%   `connected_at'  — Unix timestamp (seconds) of the hello frame
 %% @end
@@ -103,10 +90,10 @@ list_filters() ->
 -spec list_agents() -> [map()].
 list_agents() ->
     [#{
-        name          => Name,
-        capabilities  => Caps,
-        connected_at  => ConnectedAt
-    } || {Name, Caps, ConnectedAt} <- ets:tab2list(agent_registry)].
+        name         => Name,
+        capabilities => Caps,
+        connected_at => ConnectedAt
+    } || {Name, Caps, ConnectedAt, _Pid} <- ets:tab2list(agent_registry)].
 
 %%====================================================================
 %% Internal helpers
@@ -123,7 +110,7 @@ collect_results(N, Id, Timeout, Acc) ->
                       [length(Acc) + 1, length(Acc) + N, Id]),
             collect_results(N - 1, Id, Timeout, [Result | Acc])
     after Timeout ->
-        io:format("[disco] Timeout: ~p filter(s) did not respond for query ~s~n",
+        io:format("[disco] Timeout: ~p agent(s) did not respond for query ~s~n",
                   [N, Id]),
         ets:delete(pending_queries, Id),
         Acc
