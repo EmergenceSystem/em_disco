@@ -102,15 +102,19 @@ websocket_handle({text, Data}, State) ->
             {reply, {text, Reply}, State};
 
         %% ── Query result ─────────────────────────────────────────────
+        %%
+        %% IMPORTANT: do NOT delete the pending_queries entry here.
+        %% Multiple agents may respond to the same query id.
+        %% collect_results/4 in em_disco owns the cleanup, either when
+        %% all expected results arrive or when the timeout fires.
         #{<<"action">> := <<"result">>, <<"id">> := Id, <<"data">> := Result} ->
             case ets:lookup(pending_queries, Id) of
                 [{Id, CallerPid}] ->
                     io:format("[disco] Forwarding result for query ~s to caller ~p~n",
                               [Id, CallerPid]),
-                    CallerPid ! {query_result, Id, Result},
-                    ets:delete(pending_queries, Id);
+                    CallerPid ! {query_result, Id, Result};
                 [] ->
-                    io:format("[disco] No pending caller for query ~s (already timed out?)~n",
+                    io:format("[disco] No pending caller for query ~s (already completed or timed out)~n",
                               [Id])
             end,
             {ok, State};
@@ -146,7 +150,6 @@ websocket_info(_Info, State) ->
 terminate(_Reason, _Req, #ws_state{name = undefined}) ->
     ok;
 terminate(_Reason, _Req, #ws_state{name = Name, registered = false}) ->
-    %% Connected but never sent agent_hello — not in agent_registry.
     io:format("[disco] Unregistered agent disconnected: ~s~n", [Name]),
     ok;
 terminate(_Reason, _Req, #ws_state{name = Name, registered = true}) ->

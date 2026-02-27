@@ -18,6 +18,11 @@
 %%%   { "embryo_list": [ <result>, ... ] }
 %%% '''
 %%%
+%%% Results are grouped by their `"type"' field and ordered by
+%%% descending frequency: the most represented type comes first,
+%%% then the next, and so on. Items without a `"type"' field are
+%%% grouped under the internal key `<<>>` and placed last.
+%%%
 %%% Returns HTTP 400 on bad input, HTTP 500 on internal errors.
 %%%
 %%% This module is intentionally thin: it parses the request and
@@ -45,11 +50,18 @@ init(Req0, State) ->
 
     Req2 = case parse_query_body(Body) of
         {ok, QueryBin} ->
-            Results      = em_disco:query(QueryBin),
-            %% Each filter returns a list of embryos.
-            %% Flatten all filter results into a single list.
-            Embryos      = lists:flatten(Results),
-            ResponseBody = json:encode(#{<<"embryo_list">> => Embryos}),
+            Results = em_disco:query(QueryBin),
+            %% Each agent returns either a list of items or a single item.
+            %% Use flatmap instead of lists:flatten — flatten is recursive
+            %% and would destroy nested lists inside items (e.g. ips fields).
+            Embryos = lists:flatmap(fun
+                (L) when is_list(L) -> L;
+                (M) when is_map(M)  -> [M];
+                (_)                  -> []
+            end, Results),
+            io:format("[disco] Flat embryos (~p items)~n", [length(Embryos)]),
+            Sorted       = sort_by_type_frequency(Embryos),
+            ResponseBody = json:encode(#{<<"embryo_list">> => Sorted}),
             cowboy_req:reply(200,
                 #{<<"content-type">> => <<"application/json">>},
                 ResponseBody,
@@ -96,3 +108,60 @@ parse_query_body(Body) when is_binary(Body) ->
     catch
         _:_ -> {error, invalid_json}
     end.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc Reorders a flat list of result maps by descending type frequency.
+%%
+%% Each item is expected to be a map that may contain a `<<"type">>'
+%% key. Items sharing the same type are kept contiguous. Groups are
+%% ordered from the most frequent type to the least frequent.
+%% Items without a `<<"type">' key are treated as type `<<>>' and
+%% placed at the end.
+%%
+%% Example
+%% ```
+%%   Input : [dns_a, url, dns_a, url, dns_a, txt]
+%%   Output: [dns_a, dns_a, dns_a, url, url, txt]
+%% '''
+%%
+%% @param Items   Flat list of decoded JSON maps.
+%% @return        Same items, reordered by type frequency.
+%% @end
+%%--------------------------------------------------------------------
+-spec sort_by_type_frequency([map()]) -> [map()].
+sort_by_type_frequency([]) ->
+    [];
+sort_by_type_frequency(Items) ->
+    %% 1. Group items by type, preserving insertion order within each group.
+    {GroupMap, TypeOrder} = lists:foldl(
+        fun(Item, {Map, Order}) ->
+            Type = case Item of
+                #{<<"type">> := T} -> T;
+                _                  -> <<>>
+            end,
+            Bucket   = maps:get(Type, Map, []),
+            NewMap   = maps:put(Type, Bucket ++ [Item], Map),
+            NewOrder = case lists:member(Type, Order) of
+                true  -> Order;
+                false -> Order ++ [Type]
+            end,
+            {NewMap, NewOrder}
+        end,
+        {#{}, []},
+        Items
+    ),
+
+    %% 2. Sort types by descending bucket size (most frequent first).
+    SortedTypes = lists:sort(
+        fun(A, B) ->
+            length(maps:get(A, GroupMap)) >= length(maps:get(B, GroupMap))
+        end,
+        TypeOrder
+    ),
+
+    io:format("[disco] Result type order (by frequency): ~p~n",
+              [[{T, length(maps:get(T, GroupMap))} || T <- SortedTypes]]),
+
+    %% 3. Concatenate buckets in sorted type order.
+    lists:flatmap(fun(Type) -> maps:get(Type, GroupMap) end, SortedTypes).
