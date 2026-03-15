@@ -6,15 +6,17 @@
 %%% Manages the service lifecycle and provides `query/1' to fan out
 %%% a request to all connected agents and aggregate results.
 %%%
-%%% === ETS tables (owned by em_disco_sup) ===
+%%% ETS tables (owned by em_disco_sup):
 %%%
-%%%   `agent_registry' — `{Name :: binary(), Caps :: [binary()],
-%%%                        ConnectedAt :: integer(), Pid :: pid()}'
+%%%   `agent_registry'  — {Name :: binary(), Caps :: [binary()],
+%%%                         ConnectedAt :: integer(), Pid :: pid()}
 %%%        All connected agents. Populated on `agent_hello',
 %%%        cleared on WebSocket disconnect.
 %%%
-%%%   `pending_queries' — `{Id :: binary(), Pid :: pid()}'
+%%%   `pending_queries' — {Id :: binary(), Pid :: pid()}
 %%%        In-flight queries waiting for results.
+%%%        Entries are deleted when all expected results arrive
+%%%        OR when the collection timeout fires — whichever comes first.
 %%%
 %%% @author Steve Roques
 %%% @end
@@ -54,6 +56,8 @@ stop() ->
 %% @doc Fans out a query to all connected agents and collects results.
 %%
 %% Every agent in `agent_registry' receives the query payload.
+%% The pending_queries entry is always cleaned up — either in the
+%% success branch (all agents replied) or in the timeout branch.
 %% @end
 %%--------------------------------------------------------------------
 -spec query(binary()) -> list().
@@ -101,7 +105,9 @@ list_agents() ->
 
 -spec collect_results(non_neg_integer(), binary(), non_neg_integer(), list()) -> list().
 collect_results(0, Id, _Timeout, Acc) ->
+    %% All expected agents replied — clean up and return.
     io:format("[disco] All results collected for query ~s~n", [Id]),
+    ets:delete(pending_queries, Id),
     Acc;
 collect_results(N, Id, Timeout, Acc) ->
     receive
@@ -110,6 +116,8 @@ collect_results(N, Id, Timeout, Acc) ->
                       [length(Acc) + 1, length(Acc) + N, Id]),
             collect_results(N - 1, Id, Timeout, [Result | Acc])
     after Timeout ->
+        %% Some agents did not respond in time — clean up and return
+        %% whatever was collected so far.
         io:format("[disco] Timeout: ~p agent(s) did not respond for query ~s~n",
                   [N, Id]),
         ets:delete(pending_queries, Id),
