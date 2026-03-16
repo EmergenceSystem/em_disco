@@ -7,20 +7,21 @@
 %%%
 %%% === ETS tables ===
 %%%
-%%%   `agent_registry'  — `{Name :: binary(), Caps :: [binary()],
-%%%                         ConnectedAt :: integer(), Pid :: pid()}'
-%%%        All connected agents. Populated on `agent_hello',
+%%%   `agent_registry'  — {Name :: binary(), Caps :: [binary()],
+%%%                        ConnectedAt :: integer(), Pid :: pid()}
+%%%        All connected agents. Populated on agent_hello,
 %%%        cleared on WebSocket disconnect.
 %%%
-%%%   `pending_queries' — `{Id :: binary(), Pid :: pid()}'
+%%%   `pending_queries' — {Id :: binary(), Pid :: pid()}
 %%%        In-flight queries. Entries are removed when the last result
 %%%        arrives or when the collection timeout fires.
 %%%
 %%% === HTTP routes (port 8080) ===
 %%%
-%%%   `GET  /ws'       → `em_disco_handlers'         (WebSocket, persistent)
-%%%   `POST /query'    → `em_disco_http_handler'      (HTTP, short-lived)
-%%%   `GET  /registry' → `em_disco_registry_handler'  (HTTP, read-only)
+%%%   GET  /           → index.html landing page (node registry UI)
+%%%   GET  /ws         → em_disco_handlers        (WebSocket, persistent)
+%%%   POST /query      → em_disco_http_handler    (HTTP, short-lived)
+%%%   GET  /registry   → em_disco_registry_handler (HTTP, read-only)
 %%%
 %%% Both ETS tables are owned by this supervisor so that they survive
 %%% individual child crashes.
@@ -33,31 +34,21 @@
 
 -export([start_link/0, init/1]).
 
-%%--------------------------------------------------------------------
-%% @doc Starts the top-level supervisor and registers it locally.
-%%
-%% @return `{ok, Pid}' on success, `{error, Reason}' otherwise.
-%% @end
-%%--------------------------------------------------------------------
 -spec start_link() -> {ok, pid()} | {error, term()}.
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 %% @private
 init([]) ->
-    %% ── ETS tables ──────────────────────────────────────────────────
-    %%
-    %% Owned by the supervisor so they persist across worker restarts.
-
-    %% All connected agents — includes pid for query dispatch.
+    %% ETS tables owned by the supervisor so they persist across worker restarts.
     ets:new(agent_registry,  [set, named_table, public, {read_concurrency, true}]),
-
-    %% In-flight queries awaiting results from connected agents.
     ets:new(pending_queries, [set, named_table, public]),
 
-    %% ── HTTP / WebSocket routes ──────────────────────────────────────
     Dispatch = cowboy_router:compile([
         {'_', [
+            %% Landing page — live registry UI.
+            {"/",         cowboy_static, {priv_file, em_disco, "templates/index.html"}},
+            {"/favicon.ico",  cowboy_static,   {priv_file, em_disco, "static/favicon.ico"}},
             %% Persistent WebSocket endpoint — agents connect here.
             {"/ws",       em_disco_handlers,         []},
 
@@ -75,6 +66,7 @@ init([]) ->
     ),
 
     io:format("[em_disco] Started on port 8080~n"),
+    io:format("[em_disco]   HTTP  landing  : http://localhost:8080~n"),
     io:format("[em_disco]   WS    agents   : ws://localhost:8080/ws~n"),
     io:format("[em_disco]   HTTP  queries  : http://localhost:8080/query~n"),
     io:format("[em_disco]   HTTP  registry : http://localhost:8080/registry~n"),
