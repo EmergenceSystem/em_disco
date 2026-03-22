@@ -56,13 +56,9 @@ query(Body) ->
 query(Body, Capabilities) ->
     AllAgents = ets:tab2list(agent_registry),
     case AllAgents of
-        [] ->
-            io:format("[disco] query received but no agents connected~n"),
-            [];
+        [] -> [];
         _ ->
-            Agents = select_agents(AllAgents, Capabilities),
-            io:format("[disco] routing to ~p / ~p agent(s)~n",
-                      [length(Agents), length(AllAgents)]),
+            Agents  = select_agents(AllAgents, Capabilities),
             Id      = generate_query_id(),
             Payload = json:encode(#{
                 <<"action">> => <<"query">>,
@@ -74,7 +70,23 @@ query(Body, Capabilities) ->
                 io:format("[disco] Dispatching ~s to agent ~s~n", [Id, Name]),
                 Pid ! {send, Payload}
             end, Agents),
-            collect_results(length(Agents), Id, ?QUERY_TIMEOUT_MS, [])
+            %% Deadline = now + total timeout (not per-agent)
+            Deadline = erlang:monotonic_time(millisecond) + ?QUERY_TIMEOUT_MS,
+            collect_results(length(Agents), Id, Deadline, [])
+    end.
+
+collect_results(0, Id, _Deadline, Acc) ->
+    ets:delete(pending_queries, Id),
+    Acc;
+collect_results(N, Id, Deadline, Acc) ->
+    Remaining = max(0, Deadline - erlang:monotonic_time(millisecond)),
+    receive
+        {query_result, Id, Result} ->
+            collect_results(N - 1, Id, Deadline, [Result | Acc])
+    after Remaining ->
+        io:format("[disco] Timeout: ~p agent(s) did not respond for ~s~n", [N, Id]),
+        ets:delete(pending_queries, Id),
+        Acc
     end.
 
 %%--------------------------------------------------------------------
@@ -116,25 +128,6 @@ select_agents(All, Caps) ->
             All;
         _ ->
             Matching
-    end.
-
--spec collect_results(non_neg_integer(), binary(),
-                      non_neg_integer(), list()) -> list().
-collect_results(0, Id, _Timeout, Acc) ->
-    io:format("[disco] All results collected for query ~s~n", [Id]),
-    ets:delete(pending_queries, Id),
-    Acc;
-collect_results(N, Id, Timeout, Acc) ->
-    receive
-        {query_result, Id, Result} ->
-            io:format("[disco] Got result ~p/~p for query ~s~n",
-                      [length(Acc) + 1, length(Acc) + N, Id]),
-            collect_results(N - 1, Id, Timeout, [Result | Acc])
-    after Timeout ->
-        io:format("[disco] Timeout: ~p agent(s) did not respond for ~s~n",
-                  [N, Id]),
-        ets:delete(pending_queries, Id),
-        Acc
     end.
 
 -spec generate_query_id() -> binary().
