@@ -43,11 +43,24 @@
 %% "agent_hello". Only fully-registered agents receive queries.
 -record(ws_state, {
     name       = undefined :: binary() | undefined,
-    registered = false     :: boolean()
+    registered = false     :: boolean(),
+    claims     = #{}       :: map()
 }).
 
 init(Req, _Opts) ->
-    {cowboy_websocket, Req, #ws_state{}, #{idle_timeout => infinity}}.
+    QS = cowboy_req:parse_qs(Req),
+    Token = proplists:get_value(<<"token">>, QS, undefined),
+    case em_disco_auth:verify(Token) of
+        {ok, Claims} ->
+            Timeout = application:get_env(em_disco, ws_idle_timeout, 60000),
+            {cowboy_websocket, Req, #ws_state{claims = Claims}, #{idle_timeout => Timeout}};
+        {error, Reason} ->
+            logger:warning("WS auth rejected", #{reason => Reason}),
+            Req1 = cowboy_req:reply(401,
+                #{<<"content-type">> => <<"application/json">>},
+                json:encode(#{<<"error">> => <<"unauthorized">>}), Req),
+            {ok, Req1, #ws_state{}}
+    end.
 
 websocket_init(State) ->
     {ok, State}.
@@ -68,12 +81,23 @@ websocket_handle({text, Data}, State) ->
 
         %% ── Step 1: name registration ────────────────────────────────
         #{<<"action">> := <<"register">>, <<"name">> := Name} ->
-            io:format("[disco] Agent name received: ~s~n", [Name]),
-            Reply = json:encode(#{
-                <<"status">> => <<"ok">>,
-                <<"action">> => <<"registered">>
-            }),
-            {reply, {text, Reply}, State#ws_state{name = Name}};
+            Sub = maps:get(<<"sub">>, State#ws_state.claims, undefined),
+            case Sub =:= Name of
+                true ->
+                    logger:info("Agent name received", #{agent => Name}),
+                    Reply = json:encode(#{
+                        <<"status">> => <<"ok">>,
+                        <<"action">> => <<"registered">>
+                    }),
+                    {reply, {text, Reply}, State#ws_state{name = Name}};
+                false ->
+                    logger:warning("Name mismatch", #{name => Name, sub => Sub}),
+                    Reply = json:encode(#{
+                        <<"status">> => <<"error">>,
+                        <<"reason">> => <<"name_mismatch">>
+                    }),
+                    {reply, {text, Reply}, State}
+            end;
 
         %% ── Step 2: capability announcement ─────────────────────────
         %%
@@ -82,16 +106,26 @@ websocket_handle({text, Data}, State) ->
         %% making the agent visible for query dispatch and GET /registry.
         #{<<"action">> := <<"agent_hello">>, <<"capabilities">> := Caps}
           when State#ws_state.name =/= undefined ->
-            Name        = State#ws_state.name,
-            ConnectedAt = erlang:system_time(second),
-            ets:insert(agent_registry, {Name, Caps, ConnectedAt, self()}),
-            io:format("[disco] Agent registered: ~s, capabilities: ~p~n", [Name, Caps]),
-            Reply = json:encode(#{
-                <<"status">>       => <<"ok">>,
-                <<"action">>       => <<"agent_registered">>,
-                <<"capabilities">> => Caps
-            }),
-            {reply, {text, Reply}, State#ws_state{registered = true}};
+            Name = State#ws_state.name,
+            case ets:lookup(agent_registry, Name) of
+                [{Name, _OldCaps, _OldAt, _OldPid}] ->
+                    logger:warning("Duplicate agent name rejected", #{agent => Name}),
+                    Reply = json:encode(#{
+                        <<"status">> => <<"error">>,
+                        <<"reason">> => <<"name_taken">>
+                    }),
+                    {reply, {text, Reply}, State};
+                [] ->
+                    ConnectedAt = erlang:system_time(second),
+                    ets:insert(agent_registry, {Name, Caps, ConnectedAt, self()}),
+                    logger:info("Agent registered", #{agent => Name, capabilities => Caps}),
+                    Reply = json:encode(#{
+                        <<"status">>       => <<"ok">>,
+                        <<"action">>       => <<"agent_registered">>,
+                        <<"capabilities">> => Caps
+                    }),
+                    {reply, {text, Reply}, State#ws_state{registered = true}}
+            end;
 
         %% ── agent_hello before register: reject gracefully ───────────
         #{<<"action">> := <<"agent_hello">>} ->
