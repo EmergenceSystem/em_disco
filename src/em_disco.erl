@@ -26,13 +26,13 @@
 start() ->
     application:ensure_all_started(cowboy),
     application:ensure_all_started(em_disco),
-    io:format("[disco] em_disco started~n").
+    logger:info("em_disco started").
 
 -spec stop() -> ok.
 stop() ->
     cowboy:stop_listener(disco_listener),
     application:stop(em_disco),
-    io:format("[disco] em_disco stopped~n").
+    logger:info("em_disco stopped").
 
 %%--------------------------------------------------------------------
 %% @doc Broadcasts a query to all connected agents.
@@ -67,7 +67,7 @@ query(Body, Capabilities) ->
             }),
             ets:insert(pending_queries, {Id, self()}),
             lists:foreach(fun({Name, _Caps, _At, Pid}) ->
-                io:format("[disco] Dispatching ~s to agent ~s~n", [Id, Name]),
+                logger:debug("Dispatching query", #{query_id => Id, agent => Name}),
                 Pid ! {send, Payload}
             end, Agents),
             %% Deadline = now + total timeout (not per-agent)
@@ -84,7 +84,7 @@ collect_results(N, Id, Deadline, Acc) ->
         {query_result, Id, Result} ->
             collect_results(N - 1, Id, Deadline, [Result | Acc])
     after Remaining ->
-        io:format("[disco] Timeout: ~p agent(s) did not respond for ~s~n", [N, Id]),
+        logger:warning("Query timeout", #{pending => N, query_id => Id}),
         ets:delete(pending_queries, Id),
         Acc
     end.
@@ -124,7 +124,7 @@ select_agents(All, Caps) ->
                      lists:any(fun(C) -> lists:member(C, AgentCaps) end, Caps)],
     case Matching of
         [] ->
-            io:format("[disco] no agent matches ~p — broadcasting~n", [Caps]),
+            logger:info("No agent matches, broadcasting", #{capabilities => Caps}),
             All;
         _ ->
             Matching

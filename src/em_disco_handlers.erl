@@ -129,7 +129,7 @@ websocket_handle({text, Data}, State) ->
 
         %% ── agent_hello before register: reject gracefully ───────────
         #{<<"action">> := <<"agent_hello">>} ->
-            io:format("[disco] agent_hello received before register — ignoring~n"),
+            logger:warning("agent_hello before register"),
             Reply = json:encode(#{
                 <<"error">> => <<"must register before agent_hello">>
             }),
@@ -144,19 +144,16 @@ websocket_handle({text, Data}, State) ->
         #{<<"action">> := <<"result">>, <<"id">> := Id, <<"data">> := Result} ->
             case ets:lookup(pending_queries, Id) of
                 [{Id, CallerPid}] ->
-                    io:format("[disco] Forwarding result for query ~s to caller ~p~n",
-                              [Id, CallerPid]),
+                    logger:debug("Forwarding result", #{query_id => Id, caller => CallerPid}),
                     CallerPid ! {query_result, Id, Result};
                 [] ->
-                    io:format("[disco] No pending caller for query ~s (already completed or timed out)~n",
-                              [Id])
+                    logger:debug("No pending caller", #{query_id => Id})
             end,
             {ok, State};
 
         %% ── Unknown frame ────────────────────────────────────────────
         _ ->
-            io:format("[disco] Unknown WS message from agent ~p~n",
-                      [State#ws_state.name]),
+            logger:warning("Unknown WS message", #{agent => State#ws_state.name}),
             Reply = json:encode(#{<<"error">> => <<"unknown_action">>}),
             {reply, {text, Reply}, State}
     end;
@@ -184,9 +181,9 @@ websocket_info(_Info, State) ->
 terminate(_Reason, _Req, #ws_state{name = undefined}) ->
     ok;
 terminate(_Reason, _Req, #ws_state{name = Name, registered = false}) ->
-    io:format("[disco] Unregistered agent disconnected: ~s~n", [Name]),
+    logger:info("Unregistered agent disconnected", #{agent => Name}),
     ok;
 terminate(_Reason, _Req, #ws_state{name = Name, registered = true}) ->
     ets:delete(agent_registry, Name),
-    io:format("[disco] Agent disconnected: ~s~n", [Name]),
+    logger:info("Agent disconnected", #{agent => Name}),
     ok.

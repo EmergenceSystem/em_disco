@@ -112,6 +112,7 @@ sort_by_type_frequency(Items) ->
         end,
         TypeOrder
     ),
-    io:format("[disco] Result type order: ~p~n",
-              [[{T, length(maps:get(T, GroupMap))} || T <- SortedTypes]]),
+    logger:debug("Result type order", #{
+        types => [{T, length(maps:get(T, GroupMap))} || T <- SortedTypes]
+    }),
     lists:flatmap(fun(Type) -> maps:get(Type, GroupMap) end, SortedTypes).
