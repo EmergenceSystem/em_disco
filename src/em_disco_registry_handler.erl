@@ -43,18 +43,28 @@
 %% @end
 %%--------------------------------------------------------------------
 init(Req0, State) ->
-    Agents = [
-        #{
-            <<"name">>         => Name,
-            <<"capabilities">> => Caps,
-            <<"connected_at">> => ConnectedAt
-        }
-        || {Name, Caps, ConnectedAt, _Pid} <- ets:tab2list(agent_registry)
-    ],
-    Body = json:encode(#{<<"agents">> => Agents}),
-    Req1 = cowboy_req:reply(200,
-        #{<<"content-type">> => <<"application/json">>},
-        Body,
-        Req0
-    ),
-    {ok, Req1, State}.
+    {IP, _Port} = cowboy_req:peer(Req0),
+    case em_disco_rate:check(IP) of
+        {error, rate_limited} ->
+            Req = cowboy_req:reply(429,
+                #{<<"content-type">> => <<"application/json">>,
+                  <<"retry-after">> => <<"1">>},
+                json:encode(#{<<"error">> => <<"rate_limited">>}), Req0),
+            {ok, Req, State};
+        ok ->
+            Agents = [
+                #{
+                    <<"name">>         => Name,
+                    <<"capabilities">> => Caps,
+                    <<"connected_at">> => ConnectedAt
+                }
+                || {Name, Caps, ConnectedAt, _Pid} <- ets:tab2list(agent_registry)
+            ],
+            Body = json:encode(#{<<"agents">> => Agents}),
+            Req1 = cowboy_req:reply(200,
+                #{<<"content-type">> => <<"application/json">>},
+                Body,
+                Req0
+            ),
+            {ok, Req1, State}
+    end.

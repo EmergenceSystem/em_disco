@@ -27,29 +27,39 @@
 -export([init/2]).
 
 init(Req0, State) ->
-    {ok, Body, Req1} = cowboy_req:read_body(Req0),
-    Req2 = case parse_query_body(Body) of
-        {ok, QueryBin, Caps} ->
-            Results = em_disco:query(QueryBin, Caps),
-            Embryos = lists:flatmap(fun
-                (L) when is_list(L) -> L;
-                (M) when is_map(M)  -> [M];
-                (_)                  -> []
-            end, Results),
-            io:format("[disco] Flat embryos (~p items)~n", [length(Embryos)]),
-            Sorted       = sort_by_type_frequency(Embryos),
-            ResponseBody = json:encode(#{<<"embryo_list">> => Sorted}),
-            cowboy_req:reply(200,
+    {IP, _Port} = cowboy_req:peer(Req0),
+    case em_disco_rate:check(IP) of
+        {error, rate_limited} ->
+            Req = cowboy_req:reply(429,
                 #{<<"content-type">> => <<"application/json">>,
-                  <<"access-control-allow-origin">> => <<"*">>},
-                ResponseBody, Req1);
-        {error, Reason} ->
-            io:format("[disco] HTTP query parse error: ~p~n", [Reason]),
-            cowboy_req:reply(400,
-                #{<<"content-type">> => <<"application/json">>},
-                json:encode(#{<<"error">> => <<"invalid_request">>}), Req1)
-    end,
-    {ok, Req2, State}.
+                  <<"retry-after">> => <<"1">>},
+                json:encode(#{<<"error">> => <<"rate_limited">>}), Req0),
+            {ok, Req, State};
+        ok ->
+            {ok, Body, Req1} = cowboy_req:read_body(Req0),
+            Req2 = case parse_query_body(Body) of
+                {ok, QueryBin, Caps} ->
+                    Results = em_disco:query(QueryBin, Caps),
+                    Embryos = lists:flatmap(fun
+                        (L) when is_list(L) -> L;
+                        (M) when is_map(M)  -> [M];
+                        (_)                  -> []
+                    end, Results),
+                    logger:debug("Query results", #{count => length(Embryos)}),
+                    Sorted       = sort_by_type_frequency(Embryos),
+                    ResponseBody = json:encode(#{<<"embryo_list">> => Sorted}),
+                    cowboy_req:reply(200,
+                        #{<<"content-type">> => <<"application/json">>,
+                          <<"access-control-allow-origin">> => <<"*">>},
+                        ResponseBody, Req1);
+                {error, Reason} ->
+                    logger:warning("HTTP query parse error", #{reason => Reason}),
+                    cowboy_req:reply(400,
+                        #{<<"content-type">> => <<"application/json">>},
+                        json:encode(#{<<"error">> => <<"invalid_request">>}), Req1)
+            end,
+            {ok, Req2, State}
+    end.
 
 %%====================================================================
 %% Internal helpers

@@ -57,8 +57,18 @@
 %%====================================================================
 
 init(Req0, State) ->
-    Method = cowboy_req:method(Req0),
-    handle(Method, Req0, State).
+    {IP, _Port} = cowboy_req:peer(Req0),
+    case em_disco_rate:check(IP) of
+        {error, rate_limited} ->
+            Req = cowboy_req:reply(429,
+                #{<<"content-type">> => <<"application/json">>,
+                  <<"retry-after">> => <<"1">>},
+                json:encode(#{<<"error">> => <<"rate_limited">>}), Req0),
+            {ok, Req, State};
+        ok ->
+            Method = cowboy_req:method(Req0),
+            handle(Method, Req0, State)
+    end.
 
 %% GET /mcp — optional SSE channel for server notifications
 handle(<<"GET">>, Req0, State) ->
