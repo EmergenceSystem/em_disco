@@ -26,39 +26,39 @@ start_link() ->
 init([]) ->
     ets:new(agent_registry,  [set, named_table, public, {read_concurrency, true}]),
     ets:new(pending_queries, [set, named_table, public]),
+    ets:new(rate_buckets,    [set, named_table, public]),
+
+    Port = get_port(),
 
     Dispatch = cowboy_router:compile([
         {'_', [
-            %% Landing page — live registry UI.
             {"/",         cowboy_static,
                           {priv_file, em_disco, "templates/index.html"}},
-
-            %% Persistent WebSocket endpoint — agents connect here.
             {"/ws",       em_disco_handlers,         []},
-
-            %% HTTP endpoint — Emquest and other clients post queries here.
             {"/query",    em_disco_http_handler,     []},
-
-            %% HTTP endpoint — read live agent list and their capabilities.
             {"/registry", em_disco_registry_handler, []},
-
-            %% MCP endpoint — JSON-RPC over HTTP or SSE.
-            %% GET  /mcp → SSE channel (server notifications)
-            %% POST /mcp → JSON-RPC request/response
             {"/mcp",      em_disco_mcp_handler,      []}
         ]}
     ]),
 
     {ok, _} = cowboy:start_clear(disco_listener,
-        [{port, 8080}],
+        [{port, Port}],
         #{env => #{dispatch => Dispatch}}
     ),
 
-    io:format("[em_disco] Started on port 8080~n"),
-    io:format("[em_disco]   HTTP  landing  : http://localhost:8080~n"),
-    io:format("[em_disco]   WS    agents   : ws://localhost:8080/ws~n"),
-    io:format("[em_disco]   HTTP  queries  : http://localhost:8080/query~n"),
-    io:format("[em_disco]   HTTP  registry : http://localhost:8080/registry~n"),
-    io:format("[em_disco]   MCP   server   : http://localhost:8080/mcp~n"),
+    ActualPort = ranch:get_port(disco_listener),
+    logger:info("em_disco started", #{port => ActualPort}),
 
-    {ok, {#{strategy => one_for_one, intensity => 5, period => 10}, []}}.
+    Children = [
+        #{id => em_disco_rate,
+          start => {em_disco_rate, start_link, []},
+          restart => permanent,
+          type => worker}
+    ],
+    {ok, {#{strategy => one_for_one, intensity => 5, period => 10}, Children}}.
+
+get_port() ->
+    case os:getenv("EM_DISCO_PORT") of
+        false -> application:get_env(em_disco, port, 8080);
+        Val   -> list_to_integer(Val)
+    end.

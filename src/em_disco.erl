@@ -20,7 +20,7 @@
     list_capabilities/0
 ]).
 
--define(QUERY_TIMEOUT_MS, 5000).
+-define(QUERY_TIMEOUT_MS, application:get_env(em_disco, query_timeout_ms, 5000)).
 
 -spec start() -> ok.
 start() ->
