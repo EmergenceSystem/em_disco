@@ -20,10 +20,23 @@
 
 -export([start_link/0, init/1]).
 
+%%--------------------------------------------------------------------
+%% @doc Start the top-level supervisor.
+%% @end
+%%--------------------------------------------------------------------
 -spec start_link() -> {ok, pid()} | {error, term()}.
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
+%%--------------------------------------------------------------------
+%% @doc Supervisor initialisation callback.
+%%
+%% Creates the `agent_registry', `pending_queries', and `rate_buckets'
+%% ETS tables, starts the Cowboy HTTP listener, then starts the
+%% `em_disco_sse_registry' and `em_disco_rate' worker processes.
+%% @end
+%%--------------------------------------------------------------------
+-spec init([]) -> {ok, {supervisor:sup_flags(), [supervisor:child_spec()]}}.
 init([]) ->
     ets:new(agent_registry,  [set, named_table, public, {read_concurrency, true}]),
     ets:new(pending_queries, [set, named_table, public]),
@@ -63,6 +76,15 @@ init([]) ->
     ],
     {ok, {#{strategy => one_for_one, intensity => 5, period => 10}, Children}}.
 
+%% @private
+%%--------------------------------------------------------------------
+%% @doc Resolve the HTTP port from environment variable or application config.
+%%
+%% `EM_DISCO_PORT' environment variable overrides `{port, N}' in
+%% sys.config. Defaults to 8080.
+%% @end
+%%--------------------------------------------------------------------
+-spec get_port() -> non_neg_integer().
 get_port() ->
     case os:getenv("EM_DISCO_PORT") of
         false -> application:get_env(em_disco, port, 8080);

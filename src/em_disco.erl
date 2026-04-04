@@ -22,12 +22,25 @@
 
 -define(QUERY_TIMEOUT_MS, application:get_env(em_disco, query_timeout_ms, 5000)).
 
+%%--------------------------------------------------------------------
+%% @doc Convenience: ensures all dependencies are started then starts
+%% the `em_disco' application.
+%%
+%% Intended for use in the Erlang shell. In a release, the application
+%% is started automatically via `em_disco_app'.
+%% @end
+%%--------------------------------------------------------------------
 -spec start() -> ok.
 start() ->
     application:ensure_all_started(cowboy),
     application:ensure_all_started(em_disco),
     logger:info("em_disco started").
 
+%%--------------------------------------------------------------------
+%% @doc Convenience: stops the Cowboy listener and the `em_disco'
+%% application.
+%% @end
+%%--------------------------------------------------------------------
 -spec stop() -> ok.
 stop() ->
     cowboy:stop_listener(disco_listener),
@@ -75,6 +88,7 @@ query(Body, Capabilities) ->
             collect_results(length(Agents), Id, Deadline, [])
     end.
 
+%% @private
 collect_results(0, Id, _Deadline, Acc) ->
     ets:delete(pending_queries, Id),
     Acc;
@@ -116,6 +130,7 @@ list_capabilities() ->
 %% Internal helpers
 %%====================================================================
 
+%% @private
 -spec select_agents(list(), [binary()]) -> list().
 select_agents(All, []) ->
     All;
@@ -130,6 +145,7 @@ select_agents(All, Caps) ->
             Matching
     end.
 
+%% @private
 -spec generate_query_id() -> binary().
 generate_query_id() ->
     base64:encode(crypto:strong_rand_bytes(8)).

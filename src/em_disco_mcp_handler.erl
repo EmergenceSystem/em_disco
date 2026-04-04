@@ -56,6 +56,13 @@
 %% Cowboy entry point
 %%====================================================================
 
+%%--------------------------------------------------------------------
+%% @doc Cowboy request entry point for `GET /mcp' and `POST /mcp'.
+%%
+%% Checks the rate limit then routes to `handle/3'. CORS preflight
+%% (`OPTIONS') is handled without rate limiting.
+%% @end
+%%--------------------------------------------------------------------
 init(Req0, State) ->
     {IP, _Port} = cowboy_req:peer(Req0),
     case em_disco_rate:check(IP) of
@@ -70,6 +77,7 @@ init(Req0, State) ->
             handle(Method, Req0, State)
     end.
 
+%% @private
 %% GET /mcp — optional SSE channel for server notifications
 handle(<<"GET">>, Req0, State) ->
     Req = cowboy_req:stream_reply(200, #{
@@ -121,11 +129,13 @@ handle(_, Req0, State) ->
 %% Response modes
 %%====================================================================
 
+%% @private
 %% Plain JSON response — single request/response
 handle_json(Request, Req0, State) ->
     Response = dispatch(Request),
     reply_json(json:encode(Response), Req0, State).
 
+%% @private
 %% SSE response — stream one or more events then close
 handle_sse(Request, Req0, State) ->
     Req = cowboy_req:stream_reply(200, #{
@@ -138,6 +148,7 @@ handle_sse(Request, Req0, State) ->
     cowboy_req:stream_body(<<>>, fin, Req),
     {ok, Req, State}.
 
+%% @private
 reply_json(Body, Req0, State) ->
     Req = cowboy_req:reply(200,
         #{<<"content-type">>                => <<"application/json">>,
@@ -149,6 +160,7 @@ reply_json(Body, Req0, State) ->
 %% JSON-RPC dispatch
 %%====================================================================
 
+%% @private
 -spec dispatch(map()) -> map().
 dispatch(#{<<"method">> := <<"initialize">>, <<"id">> := Id}) ->
     result(Id, #{
@@ -190,6 +202,7 @@ dispatch(_) ->
 %% Tool implementations
 %%====================================================================
 
+%% @private
 -spec call_tool(term(), binary(), map()) -> map().
 call_tool(Id, <<"search">>, Args) ->
     Query = maps:get(<<"query">>, Args, <<>>),
@@ -259,6 +272,7 @@ call_tool(Id, Name, _Args) ->
 %% Tools schema
 %%====================================================================
 
+%% @private
 tools_schema() ->
     [
         #{
@@ -316,12 +330,14 @@ tools_schema() ->
 %% JSON-RPC helpers
 %%====================================================================
 
+%% @private
 -spec result(term(), term()) -> map().
 result(Id, Result) ->
     #{<<"jsonrpc">> => <<"2.0">>,
       <<"id">>      => Id,
       <<"result">>  => Result}.
 
+%% @private
 -spec error_response(term(), integer(), binary()) -> map().
 error_response(Id, Code, Message) ->
     #{<<"jsonrpc">> => <<"2.0">>,
@@ -331,11 +347,13 @@ error_response(Id, Code, Message) ->
           <<"message">> => Message
       }}.
 
+%% @private
 -spec parse_jsonrpc(binary()) -> {ok, map() | list()} | {error, term()}.
 parse_jsonrpc(Body) ->
     try {ok, json:decode(Body)}
     catch _:_ -> {error, invalid_json} end.
 
+%% @private
 -spec caps_from_args(map()) -> [binary()].
 caps_from_args(Args) ->
     case maps:get(<<"capabilities">>, Args, []) of
@@ -347,6 +365,7 @@ caps_from_args(Args) ->
 %% SSE helper
 %%====================================================================
 
+%% @private
 send_sse(Req, Event, Data) ->
     Frame = <<"event: ", Event/binary, "\ndata: ", Data/binary, "\n\n">>,
     cowboy_req:stream_body(Frame, nofin, Req).
@@ -355,6 +374,7 @@ send_sse(Req, Event, Data) ->
 %% CORS headers
 %%====================================================================
 
+%% @private
 cors_headers() ->
     #{<<"access-control-allow-origin">>  => <<"*">>,
       <<"access-control-allow-methods">> => <<"GET, POST, OPTIONS">>,

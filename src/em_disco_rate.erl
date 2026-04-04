@@ -21,10 +21,24 @@
 %% Public API
 %%====================================================================
 
+%%--------------------------------------------------------------------
+%% @doc Start the rate-limiter gen_server under the supervisor.
+%% @end
+%%--------------------------------------------------------------------
 -spec start_link() -> {ok, pid()}.
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
+%%--------------------------------------------------------------------
+%% @doc Check whether the given IP address is within its rate limit.
+%%
+%% Uses a token-bucket algorithm. Reads and writes `rate_buckets' ETS
+%% directly on the hot path — no gen_server call per request.
+%%
+%% Returns `ok' if the request is allowed, `{error, rate_limited}'
+%% otherwise.
+%% @end
+%%--------------------------------------------------------------------
 -spec check(tuple()) -> ok | {error, rate_limited}.
 check(IP) ->
     Rate  = rate_for_ip(IP),
@@ -78,6 +92,7 @@ terminate(_Reason, _State) ->
 %% Internal
 %%====================================================================
 
+%% @private
 -spec rate_for_ip(tuple()) -> number().
 rate_for_ip(IP) ->
     case is_localhost(IP) of
@@ -85,6 +100,7 @@ rate_for_ip(IP) ->
         false -> application:get_env(em_disco, rate_limit_per_second, 10)
     end.
 
+%% @private
 -spec burst_for_ip(tuple()) -> number().
 burst_for_ip(IP) ->
     case is_localhost(IP) of
@@ -92,11 +108,13 @@ burst_for_ip(IP) ->
         false -> application:get_env(em_disco, rate_limit_burst, 30)
     end.
 
+%% @private
 -spec is_localhost(tuple()) -> boolean().
 is_localhost({127, 0, 0, 1})             -> true;
 is_localhost({0, 0, 0, 0, 0, 0, 0, 1})  -> true;
 is_localhost(_)                          -> false.
 
+%% @private
 -spec to_float(number()) -> float().
 to_float(N) when is_integer(N) -> N * 1.0;
 to_float(N) when is_float(N)   -> N.

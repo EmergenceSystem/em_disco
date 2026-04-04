@@ -26,6 +26,17 @@
 
 -export([init/2]).
 
+%%--------------------------------------------------------------------
+%% @doc Cowboy request entry point for `POST /query'.
+%%
+%% Checks the rate limit for the caller's IP, parses the JSON body,
+%% dispatches the query via `em_disco:query/2', and returns the
+%% flattened, type-sorted embryo list.
+%%
+%% Returns HTTP 429 if rate-limited, 400 on parse errors, 200 on
+%% success.
+%% @end
+%%--------------------------------------------------------------------
 init(Req0, State) ->
     {IP, _Port} = cowboy_req:peer(Req0),
     case em_disco_rate:check(IP) of
@@ -67,6 +78,7 @@ init(Req0, State) ->
 %% Internal helpers
 %%====================================================================
 
+%% @private
 -spec parse_query_body(binary()) ->
     {ok, binary(), [binary()]} | {error, atom()}.
 parse_query_body(Body) when is_binary(Body) ->
@@ -88,6 +100,7 @@ parse_query_body(Body) when is_binary(Body) ->
         _:_ -> {error, invalid_json}
     end.
 
+%% @private
 -spec sort_by_type_frequency([map()]) -> [map()].
 sort_by_type_frequency([]) -> [];
 sort_by_type_frequency(Items) ->

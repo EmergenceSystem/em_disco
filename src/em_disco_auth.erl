@@ -62,6 +62,7 @@ verify(Token) when is_binary(Token) ->
 %% Internal
 %%====================================================================
 
+%% @private
 -spec check_expiry(map()) -> {ok, map()} | {error, expired}.
 check_expiry(Claims) ->
     Now = erlang:system_time(second),

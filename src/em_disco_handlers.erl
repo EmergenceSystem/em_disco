@@ -47,6 +47,15 @@
     claims     = #{}       :: map()
 }).
 
+%%--------------------------------------------------------------------
+%% @doc Cowboy upgrade callback — validates JWT when auth is required.
+%%
+%% Reads the `?token=...' query parameter and verifies it with
+%% `em_disco_auth:verify/1'. Upgrades to WebSocket on success or
+%% replies HTTP 401 on failure. When `require_auth' is `false' in
+%% application config the token check is skipped.
+%% @end
+%%--------------------------------------------------------------------
 init(Req, _Opts) ->
     RequireAuth = application:get_env(em_disco, require_auth, true),
     QS = cowboy_req:parse_qs(Req),
@@ -66,6 +75,10 @@ init(Req, _Opts) ->
             {ok, Req1, #ws_state{}}
     end.
 
+%%--------------------------------------------------------------------
+%% @doc WebSocket initialisation callback — no action required.
+%% @end
+%%--------------------------------------------------------------------
 websocket_init(State) ->
     {ok, State}.
 
