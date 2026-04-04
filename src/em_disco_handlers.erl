@@ -124,6 +124,7 @@ websocket_handle({text, Data}, State) ->
                     ConnectedAt = erlang:system_time(second),
                     ets:insert(agent_registry, {Name, Caps, ConnectedAt, self()}),
                     logger:notice("[em_disco] agent connected: ~ts", [Name]),
+                    em_disco_sse_registry:broadcast(),
                     Reply = json:encode(#{
                         <<"status">>       => <<"ok">>,
                         <<"action">>       => <<"agent_registered">>,
@@ -191,4 +192,5 @@ terminate(_Reason, _Req, #ws_state{name = Name, registered = false}) ->
 terminate(_Reason, _Req, #ws_state{name = Name, registered = true}) ->
     ets:delete(agent_registry, Name),
     logger:notice("[em_disco] agent disconnected: ~ts", [Name]),
+    em_disco_sse_registry:broadcast(),
     ok.

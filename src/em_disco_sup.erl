@@ -7,7 +7,8 @@
 %%%   GET  /           → index.html landing page (registry UI)
 %%%   GET  /ws         → em_disco_handlers        (WebSocket, agents)
 %%%   POST /query      → em_disco_http_handler    (HTTP queries)
-%%%   GET  /registry   → em_disco_registry_handler (agent list JSON)
+%%%   GET  /registry        → em_disco_registry_handler (agent list JSON)
+%%%   GET  /registry/events → em_disco_registry_events_handler (SSE push)
 %%%   GET  /mcp        → em_disco_mcp_handler     (MCP SSE channel)
 %%%   POST /mcp        → em_disco_mcp_handler     (MCP JSON-RPC)
 %%%
@@ -36,8 +37,9 @@ init([]) ->
                           {priv_file, em_disco, "templates/index.html"}},
             {"/ws",       em_disco_handlers,         []},
             {"/query",    em_disco_http_handler,     []},
-            {"/registry", em_disco_registry_handler, []},
-            {"/mcp",      em_disco_mcp_handler,      []}
+            {"/registry",        em_disco_registry_handler,        []},
+            {"/registry/events", em_disco_registry_events_handler, []},
+            {"/mcp",             em_disco_mcp_handler,             []}
         ]}
     ]),
 
@@ -50,6 +52,10 @@ init([]) ->
     logger:info("em_disco started", #{port => ActualPort}),
 
     Children = [
+        #{id => em_disco_sse_registry,
+          start => {em_disco_sse_registry, start_link, []},
+          restart => permanent,
+          type => worker},
         #{id => em_disco_rate,
           start => {em_disco_rate, start_link, []},
           restart => permanent,
