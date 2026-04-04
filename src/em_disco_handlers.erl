@@ -48,13 +48,17 @@
 }).
 
 init(Req, _Opts) ->
+    RequireAuth = application:get_env(em_disco, require_auth, true),
     QS = cowboy_req:parse_qs(Req),
     Token = proplists:get_value(<<"token">>, QS, undefined),
-    case em_disco_auth:verify(Token) of
-        {ok, Claims} ->
+    case {RequireAuth, em_disco_auth:verify(Token)} of
+        {false, _} ->
+            Timeout = application:get_env(em_disco, ws_idle_timeout, 60000),
+            {cowboy_websocket, Req, #ws_state{claims = #{}}, #{idle_timeout => Timeout}};
+        {_, {ok, Claims}} ->
             Timeout = application:get_env(em_disco, ws_idle_timeout, 60000),
             {cowboy_websocket, Req, #ws_state{claims = Claims}, #{idle_timeout => Timeout}};
-        {error, Reason} ->
+        {true, {error, Reason}} ->
             logger:warning("WS auth rejected", #{reason => Reason}),
             Req1 = cowboy_req:reply(401,
                 #{<<"content-type">> => <<"application/json">>},
@@ -81,10 +85,11 @@ websocket_handle({text, Data}, State) ->
 
         %% ── Step 1: name registration ────────────────────────────────
         #{<<"action">> := <<"register">>, <<"name">> := Name} ->
+            RequireAuth = application:get_env(em_disco, require_auth, true),
             Sub = maps:get(<<"sub">>, State#ws_state.claims, undefined),
-            case Sub =:= Name of
+            case RequireAuth =:= false orelse Sub =:= Name of
                 true ->
-                    logger:info("Agent name received", #{agent => Name}),
+                    logger:debug("Agent name received", #{agent => Name}),
                     Reply = json:encode(#{
                         <<"status">> => <<"ok">>,
                         <<"action">> => <<"registered">>
@@ -118,7 +123,7 @@ websocket_handle({text, Data}, State) ->
                 [] ->
                     ConnectedAt = erlang:system_time(second),
                     ets:insert(agent_registry, {Name, Caps, ConnectedAt, self()}),
-                    logger:info("Agent registered", #{agent => Name, capabilities => Caps}),
+                    logger:notice("[em_disco] agent connected: ~ts", [Name]),
                     Reply = json:encode(#{
                         <<"status">>       => <<"ok">>,
                         <<"action">>       => <<"agent_registered">>,
@@ -181,9 +186,9 @@ websocket_info(_Info, State) ->
 terminate(_Reason, _Req, #ws_state{name = undefined}) ->
     ok;
 terminate(_Reason, _Req, #ws_state{name = Name, registered = false}) ->
-    logger:info("Unregistered agent disconnected", #{agent => Name}),
+    logger:warning("Unregistered agent disconnected", #{agent => Name}),
     ok;
 terminate(_Reason, _Req, #ws_state{name = Name, registered = true}) ->
     ets:delete(agent_registry, Name),
-    logger:info("Agent disconnected", #{agent => Name}),
+    logger:notice("[em_disco] agent disconnected: ~ts", [Name]),
     ok.

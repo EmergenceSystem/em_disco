@@ -48,3 +48,7 @@ erl_crash.dump
 
 Mnesia.nonode@nohost/
 mnesia_test_data/
+
+# Claude Code
+.claude/
+docs/

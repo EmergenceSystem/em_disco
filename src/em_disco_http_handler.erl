@@ -39,14 +39,16 @@ init(Req0, State) ->
             {ok, Body, Req1} = cowboy_req:read_body(Req0),
             Req2 = case parse_query_body(Body) of
                 {ok, QueryBin, Caps} ->
+                    logger:notice("[em_disco] query: ~ts", [QueryBin]),
                     Results = em_disco:query(QueryBin, Caps),
                     Embryos = lists:flatmap(fun
                         (L) when is_list(L) -> L;
                         (M) when is_map(M)  -> [M];
                         (_)                  -> []
                     end, Results),
-                    logger:debug("Query results", #{count => length(Embryos)}),
                     Sorted       = sort_by_type_frequency(Embryos),
+                    logger:notice("[em_disco] ~p result(s) for: ~ts",
+                                  [length(Sorted), QueryBin]),
                     ResponseBody = json:encode(#{<<"embryo_list">> => Sorted}),
                     cowboy_req:reply(200,
                         #{<<"content-type">> => <<"application/json">>,
