@@ -94,7 +94,6 @@ Default port is `8080`. To change it, edit `em_disco_sup.erl` or set the port in
 
 - [em_filter](https://github.com/EmergenceSystem/em_filter) — library for building filters and agents
 - [Emquest](https://github.com/EmergenceSystem/Emquest) — web client
-- [em_discord_bot](https://github.com/EmergenceSystem/em_discord_bot) — Discord client
 
 ## License
 
