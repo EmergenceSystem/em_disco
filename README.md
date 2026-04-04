@@ -3,6 +3,8 @@
 
 An Erlang/OTP discovery service for Emergence filters and agents.
 
+![Screenshot](https://github.com/EmergenceSystem/em_disco/blob/main/em_disco.png)
+
 ## Overview
 
 `em_disco` is the central hub of the Emergence system. Filters and agents connect to it over a persistent WebSocket and receive broadcasted queries. HTTP clients post queries and receive aggregated results.
