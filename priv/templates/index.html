@@ -423,62 +423,80 @@ function escHtml(s) {
         .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-async function loadRegistry() {
-    const grid    = document.getElementById('agents-grid');
-    const statA   = document.getElementById('stat-agents');
-    const statC   = document.getElementById('stat-caps');
-    const footer  = document.getElementById('footer-count');
+function renderRegistry(agents) {
+    const grid   = document.getElementById('agents-grid');
+    const statA  = document.getElementById('stat-agents');
+    const statC  = document.getElementById('stat-caps');
+    const footer = document.getElementById('footer-count');
 
+    statA.textContent  = agents.length;
+    footer.textContent = `${agents.length} agent${agents.length !== 1 ? 's' : ''} connected`;
+
+    const allCaps = new Set(agents.flatMap(a => a.capabilities || []));
+    statC.textContent = allCaps.size;
+
+    if (agents.length === 0) {
+        grid.innerHTML = `<div style="color:var(--muted);font-size:0.8rem;grid-column:1/-1">No agents connected.</div>`;
+        return;
+    }
+
+    grid.innerHTML = '';
+    agents.forEach((agent, i) => {
+        const caps = (agent.capabilities || [])
+            .map(c => `<span class="cap">${escHtml(c)}</span>`)
+            .join('');
+        const card = document.createElement('div');
+        card.className = 'agent-card';
+        card.style.animationDelay = `${Math.min(i * 40, 600)}ms`;
+        card.innerHTML = `
+            <div class="agent-name">
+                <span class="agent-dot"></span>
+                ${escHtml(agent.name)}
+            </div>
+            <div class="caps">${caps || '<span class="cap">—</span>'}</div>
+            <div class="agent-since">connected ${timeAgo(agent.connected_at)}</div>
+        `;
+        grid.appendChild(card);
+    });
+}
+
+function showRegistryError(msg) {
+    const grid   = document.getElementById('agents-grid');
+    const statA  = document.getElementById('stat-agents');
+    const statC  = document.getElementById('stat-caps');
+    const footer = document.getElementById('footer-count');
+    if (grid) grid.innerHTML = `
+        <div class="error-msg" style="grid-column:1/-1">
+            <span>⚠</span>
+            <span>Could not load registry: ${escHtml(msg)}</span>
+        </div>`;
+    if (statA)  statA.textContent  = '—';
+    if (statC)  statC.textContent  = '—';
+    if (footer) footer.textContent = 'registry unavailable';
+}
+
+async function loadRegistry() {
     try {
         const r = await fetch('/registry');
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const d = await r.json();
-        const agents = d.agents || [];
-
-        statA.textContent  = agents.length;
-        footer.textContent = `${agents.length} agent${agents.length !== 1 ? 's' : ''} connected`;
-
-        const allCaps = new Set(agents.flatMap(a => a.capabilities || []));
-        statC.textContent = allCaps.size;
-
-        if (agents.length === 0) {
-            grid.innerHTML = `<div style="color:var(--muted);font-size:0.8rem;grid-column:1/-1">No agents connected.</div>`;
-            return;
-        }
-
-        grid.innerHTML = '';
-        agents.forEach((agent, i) => {
-            const caps = (agent.capabilities || [])
-                .map(c => `<span class="cap">${escHtml(c)}</span>`)
-                .join('');
-            const card = document.createElement('div');
-            card.className = 'agent-card';
-            card.style.animationDelay = `${Math.min(i * 40, 600)}ms`;
-            card.innerHTML = `
-                <div class="agent-name">
-                    <span class="agent-dot"></span>
-                    ${escHtml(agent.name)}
-                </div>
-                <div class="caps">${caps || '<span class="cap">—</span>'}</div>
-                <div class="agent-since">connected ${timeAgo(agent.connected_at)}</div>
-            `;
-            grid.appendChild(card);
-        });
-
+        renderRegistry(d.agents || []);
     } catch (err) {
-        grid.innerHTML = `
-            <div class="error-msg" style="grid-column:1/-1">
-                <span>⚠</span>
-                <span>Could not load registry: ${escHtml(err.message)}</span>
-            </div>`;
-        statA.textContent = '—';
-        statC.textContent = '—';
-        if (footer) footer.textContent = 'registry unavailable';
+        showRegistryError(err.message);
     }
 }
 
+/* Initial load via fetch (before SSE delivers first event) */
 loadRegistry();
-setInterval(loadRegistry, 15000);
+
+const _registryEvents = new EventSource('/registry/events');
+_registryEvents.onmessage = e => {
+    try { renderRegistry(JSON.parse(e.data).agents || []); }
+    catch (_) {}
+};
+_registryEvents.onerror = () => {
+    /* EventSource reconnects automatically; no action needed */
+};
 </script>
 </body>
 </html>
