@@ -62,7 +62,8 @@ init(Req0, State) ->
             ],
             Body = json:encode(#{<<"agents">> => Agents}),
             Req1 = cowboy_req:reply(200,
-                #{<<"content-type">> => <<"application/json">>},
+                #{<<"content-type">>                 => <<"application/json">>,
+                  <<"access-control-allow-origin">>  => <<"*">>},
                 Body,
                 Req0
             ),
