@@ -87,7 +87,7 @@ rebar3 shell
 | Key | Default | Description |
 |-----|---------|-------------|
 | `port` | `8080` | HTTP listen port (also `EM_DISCO_PORT` env var) |
-| `require_auth` | `true` | Require JWT on WebSocket connections |
+| `require_auth` | `false` | Require JWT on WebSocket connections — **enable in production** |
 | `jwt_secret` | `"changeme"` | HS256 signing secret — **change in production** |
 | `ws_idle_timeout` | `60000` | WebSocket idle timeout in ms |
 | `query_timeout_ms` | `5000` | Max wait for agent results per query |
