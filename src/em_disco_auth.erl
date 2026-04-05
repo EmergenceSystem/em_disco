@@ -1,9 +1,27 @@
 %%%-------------------------------------------------------------------
-%%% @doc
-%%% JWT Authentication for em_disco
+%%% @doc JWT authentication for em_disco WebSocket connections.
 %%%
-%%% Provides token issuance and verification using HS256 (HMAC-SHA256).
-%%% The shared secret is read from application config `jwt_secret`.
+%%% Provides HS256 (HMAC-SHA256) token issuance and verification.
+%%%
+%%% === Token shape ===
+%%%
+%%%   `sub'  — agent name (must match the `register' frame name)
+%%%   `iat'  — issued-at timestamp (Unix seconds)
+%%%   `exp'  — expiry timestamp (iat + 86400 s, i.e. 24 hours)
+%%%
+%%% === Configuration ===
+%%%
+%%%   `jwt_secret' — application env key; defaults to `<<"changeme">>'.
+%%%   <strong>Change this in production.</strong>
+%%%
+%%% Authentication can be disabled with `{require_auth, false}' in
+%%% sys.config — useful for local development.
+%%%
+%%% Issue a token from the Erlang shell:
+%%% ```
+%%% Secret = application:get_env(em_disco, jwt_secret, <<"changeme">>),
+%%% Token  = em_disco_auth:issue(<<"my_agent">>, Secret).
+%%% '''
 %%%
 %%% @end
 %%%-------------------------------------------------------------------
@@ -63,6 +81,12 @@ verify(Token) when is_binary(Token) ->
 %%====================================================================
 
 %% @private
+%% @doc Return `{ok, Claims}' if the token's `exp' claim is in the future.
+%%
+%% Returns `{error, expired}' if the current Unix time is greater than
+%% or equal to the `exp' field. A missing `exp' field defaults to `0'
+%% and is treated as expired.
+%% @end
 -spec check_expiry(map()) -> {ok, map()} | {error, expired}.
 check_expiry(Claims) ->
     Now = erlang:system_time(second),
