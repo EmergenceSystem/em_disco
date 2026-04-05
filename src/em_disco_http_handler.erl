@@ -1,8 +1,9 @@
 %%%-------------------------------------------------------------------
-%%% @doc
-%%% HTTP Handler for Emquest Client Queries
+%%% @doc HTTP handler for `POST /query'.
 %%%
-%%% POST /query
+%%% Checks the rate limit for the caller's IP, parses the JSON body,
+%%% dispatches the query via `em_disco:query/2', and returns the
+%%% flattened, type-sorted embryo list as JSON.
 %%%
 %%% === Request format ===
 %%%
@@ -18,7 +19,6 @@
 %%%
 %%%   { "embryo_list": [ <result>, ... ] }
 %%%
-%%% @author Steve Roques
 %%% @end
 %%%-------------------------------------------------------------------
 -module(em_disco_http_handler).
@@ -79,6 +79,15 @@ init(Req0, State) ->
 %%====================================================================
 
 %% @private
+%% @doc Parse a JSON POST body into a query binary and capabilities list.
+%%
+%% Accepts both `"query"' and `"value"' field names for backwards
+%% compatibility with em_filter clients. The `"capabilities"' field is
+%% optional; if absent or `[]', returns `[]' (broadcast to all agents).
+%%
+%% Returns `{error, empty_query}' if the query string is empty,
+%% `{error, invalid_json}' if the body cannot be decoded.
+%% @end
 -spec parse_query_body(binary()) ->
     {ok, binary(), [binary()]} | {error, atom()}.
 parse_query_body(Body) when is_binary(Body) ->
@@ -101,6 +110,12 @@ parse_query_body(Body) when is_binary(Body) ->
     end.
 
 %% @private
+%% @doc Sort results by type frequency — most-common type first.
+%%
+%% Groups items by their `"type"' field then orders the groups by
+%% descending count. Within each group, insertion order is preserved.
+%% Items without a `"type"' field are grouped under `<<>>' (empty binary).
+%% @end
 -spec sort_by_type_frequency([map()]) -> [map()].
 sort_by_type_frequency([]) -> [];
 sort_by_type_frequency(Items) ->
