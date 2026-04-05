@@ -1,12 +1,28 @@
 %%%-------------------------------------------------------------------
-%%% @doc
-%%% em_disco — Discovery and Query Dispatch Core
+%%% @doc em_disco core API — query dispatch and agent registry inspection.
 %%%
-%%% query/1 — broadcast to all agents (backwards compatible)
-%%% query/2 — route to agents matching the given capabilities list.
-%%%            Empty list = broadcast to all.
+%%% Provides two groups of functions:
 %%%
-%%% @author Steve Roques
+%%% === Query dispatch ===
+%%%
+%%% {@link query/1} and {@link query/2} fan out a query to all connected
+%%% agents, collect results within a configurable deadline, and return
+%%% the aggregated list. Agents respond asynchronously; the calling
+%%% process blocks until all agents reply or the deadline expires.
+%%%
+%%% ETS tables used:
+%%% <ul>
+%%%   <li>`agent_registry'  — `{Name, Caps, ConnectedAt, Pid}' tuples,
+%%%       maintained by {@link em_disco_handlers}</li>
+%%%   <li>`pending_queries' — `{QueryId, CallerPid}' entries for
+%%%       in-flight queries, owned by this module</li>
+%%% </ul>
+%%%
+%%% === Registry inspection ===
+%%%
+%%% {@link list_agents/0} and {@link list_capabilities/0} read
+%%% `agent_registry' directly — safe to call from any process.
+%%%
 %%% @end
 %%%-------------------------------------------------------------------
 -module(em_disco).
@@ -89,6 +105,14 @@ query(Body, Capabilities) ->
     end.
 
 %% @private
+%% @doc Collect query results from N agents until all respond or the deadline passes.
+%%
+%% `Deadline' is an absolute `erlang:monotonic_time(millisecond)' value
+%% shared across all agents — a single global deadline, not per-agent.
+%% Results that arrive before the deadline are accumulated in `Acc'.
+%% If the deadline fires with agents still pending, a warning is logged
+%% and the partial result is returned.
+%% @end
 collect_results(0, Id, _Deadline, Acc) ->
     ets:delete(pending_queries, Id),
     Acc;
@@ -131,6 +155,13 @@ list_capabilities() ->
 %%====================================================================
 
 %% @private
+%% @doc Filter agents by capability set.
+%%
+%% Returns all agents whose capability list overlaps with `Caps'.
+%% An empty `Caps' list returns all agents (broadcast).
+%% If `Caps' is non-empty but no agent matches, falls back to broadcast
+%% so the query is never silently dropped.
+%% @end
 -spec select_agents(list(), [binary()]) -> list().
 select_agents(All, []) ->
     All;
@@ -146,6 +177,11 @@ select_agents(All, Caps) ->
     end.
 
 %% @private
+%% @doc Generate a random 8-byte base64 query ID.
+%%
+%% Used to correlate agent responses with the originating query.
+%% Collision probability is negligible at typical query rates.
+%% @end
 -spec generate_query_id() -> binary().
 generate_query_id() ->
     base64:encode(crypto:strong_rand_bytes(8)).
