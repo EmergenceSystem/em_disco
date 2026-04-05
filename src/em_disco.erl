@@ -113,6 +113,7 @@ query(Body, Capabilities) ->
 %% If the deadline fires with agents still pending, a warning is logged
 %% and the partial result is returned.
 %% @end
+-spec collect_results(non_neg_integer(), binary(), integer(), list()) -> list().
 collect_results(0, Id, _Deadline, Acc) ->
     ets:delete(pending_queries, Id),
     Acc;

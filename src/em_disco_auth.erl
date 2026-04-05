@@ -32,8 +32,8 @@
 %%--------------------------------------------------------------------
 %% @doc Issues a JWT for the given agent name.
 %%
-%% The token contains `sub` (agent name), `iat` (issued at), and
-%% `exp` (expiration, 24 hours from now).
+%% The token contains `sub' (agent name), `iat' (issued at), and
+%% `exp' (expiration, 24 hours from now).
 %% @end
 %%--------------------------------------------------------------------
 -spec issue(binary(), binary()) -> binary().
@@ -52,7 +52,7 @@ issue(AgentName, Secret) ->
 %%--------------------------------------------------------------------
 %% @doc Verifies a JWT token against the configured secret.
 %%
-%% Returns `{ok, Claims}` on success or `{error, Reason}` on failure.
+%% Returns `{ok, Claims}' on success or `{error, Reason}' on failure.
 %% Checks: signature validity (HS256 only), expiration.
 %% @end
 %%--------------------------------------------------------------------

@@ -1,6 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @doc
-%%% WebSocket Handler for em_agent Connections
+%%% @doc WebSocket Handler for em_agent Connections
 %%%
 %%% Each agent opens a persistent WebSocket connection to this handler
 %%% on startup. The expected handshake is:

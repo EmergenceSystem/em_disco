@@ -1,6 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @doc
-%%% HTTP Handler for the Agent Registry
+%%% @doc HTTP Handler for the Agent Registry
 %%%
 %%% Exposes `GET /registry' so that any Queen agent (or external tool)
 %%% can discover which agents are currently connected and what
