@@ -1,18 +1,29 @@
 %%%-------------------------------------------------------------------
-%%% @doc
-%%% em_disco Top-Level Supervisor
+%%% @doc em_disco top-level supervisor.
 %%%
-%%% === HTTP routes (port 8080) ===
+%%% Initialises three ETS tables shared across the application:
+%%% <ul>
+%%%   <li>`agent_registry'  — connected agents, maintained by
+%%%       {@link em_disco_handlers}</li>
+%%%   <li>`pending_queries' — in-flight query correlations, maintained
+%%%       by {@link em_disco}</li>
+%%%   <li>`rate_buckets'    — per-IP token buckets, maintained by
+%%%       {@link em_disco_rate}</li>
+%%% </ul>
 %%%
-%%%   GET  /           → index.html landing page (registry UI)
-%%%   GET  /ws         → em_disco_handlers        (WebSocket, agents)
-%%%   POST /query      → em_disco_http_handler    (HTTP queries)
-%%%   GET  /registry        → em_disco_registry_handler (agent list JSON)
-%%%   GET  /registry/events → em_disco_registry_events_handler (SSE push)
-%%%   GET  /mcp        → em_disco_mcp_handler     (MCP SSE channel)
-%%%   POST /mcp        → em_disco_mcp_handler     (MCP JSON-RPC)
+%%% Starts the Cowboy HTTP listener on the configured port and
+%%% supervises two workers: {@link em_disco_sse_registry} and
+%%% {@link em_disco_rate}.
 %%%
-%%% @author Steve Roques
+%%% === HTTP routes (default port 8080) ===
+%%%
+%%%   GET  /                   → index.html landing page (registry UI)
+%%%   GET  /ws                 → em_disco_handlers (WebSocket, agents)
+%%%   POST /query              → em_disco_http_handler (HTTP queries)
+%%%   GET  /registry           → em_disco_registry_handler (agent list JSON)
+%%%   GET  /registry/events    → em_disco_registry_events_handler (SSE push)
+%%%   GET  /mcp, POST /mcp     → em_disco_mcp_handler (MCP Streamable HTTP)
+%%%
 %%% @end
 %%%-------------------------------------------------------------------
 -module(em_disco_sup).
