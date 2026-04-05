@@ -1,10 +1,24 @@
 %%%-------------------------------------------------------------------
-%%% @doc
-%%% Token Bucket Rate Limiter for em_disco
+%%% @doc Token-bucket rate limiter for em_disco HTTP endpoints.
 %%%
-%%% Hot path (`check/1`) reads and writes ETS directly — no gen_server
-%%% call on the request path. The gen_server only handles periodic
-%%% cleanup of stale entries.
+%%% The hot path (`check/1') reads and writes the `rate_buckets' ETS
+%%% table directly — no gen_server call on the request path. The
+%%% gen_server handles only periodic cleanup of stale entries.
+%%%
+%%% === Configuration ===
+%%%
+%%%   `rate_limit_per_second' — token refill rate for remote IPs
+%%%                             (default: 10 req/s)
+%%%   `rate_limit_burst'      — burst capacity for remote IPs
+%%%                             (default: 30 tokens)
+%%%   `rate_limit_localhost'  — effective rate and burst for localhost
+%%%                             (default: 1000)
+%%%
+%%% Localhost (`127.0.0.1' / `::1') gets a separate, much higher limit
+%%% so that local tooling is never rate-limited.
+%%%
+%%% Stale bucket entries (not updated in the last 5 minutes) are
+%%% purged every 60 seconds by the gen_server sweep.
 %%%
 %%% @end
 %%%-------------------------------------------------------------------
@@ -69,6 +83,7 @@ init([]) ->
     erlang:send_after(?SWEEP_INTERVAL_MS, self(), sweep),
     {ok, #{}}.
 
+%% Periodic sweep — remove entries idle for more than ENTRY_TTL_MS (5 min).
 handle_info(sweep, State) ->
     Cutoff = erlang:monotonic_time(millisecond) - ?ENTRY_TTL_MS,
     ets:select_delete(rate_buckets, [
@@ -93,6 +108,11 @@ terminate(_Reason, _State) ->
 %%====================================================================
 
 %% @private
+%% @doc Returns the token refill rate (req/s) for the given IP.
+%%
+%% Localhost gets `rate_limit_localhost'; all other IPs get
+%% `rate_limit_per_second'.
+%% @end
 -spec rate_for_ip(tuple()) -> number().
 rate_for_ip(IP) ->
     case is_localhost(IP) of
@@ -101,6 +121,11 @@ rate_for_ip(IP) ->
     end.
 
 %% @private
+%% @doc Returns the burst capacity for the given IP.
+%%
+%% Localhost gets `rate_limit_localhost'; all other IPs get
+%% `rate_limit_burst'.
+%% @end
 -spec burst_for_ip(tuple()) -> number().
 burst_for_ip(IP) ->
     case is_localhost(IP) of
@@ -109,12 +134,16 @@ burst_for_ip(IP) ->
     end.
 
 %% @private
+%% @doc Returns `true' for `127.0.0.1' (IPv4) and `::1' (IPv6) loopback addresses.
+%% @end
 -spec is_localhost(tuple()) -> boolean().
 is_localhost({127, 0, 0, 1})             -> true;
 is_localhost({0, 0, 0, 0, 0, 0, 0, 1})  -> true;
 is_localhost(_)                          -> false.
 
 %% @private
+%% @doc Coerce an integer or float to float for bucket arithmetic.
+%% @end
 -spec to_float(number()) -> float().
 to_float(N) when is_integer(N) -> N * 1.0;
 to_float(N) when is_float(N)   -> N.
