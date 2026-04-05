@@ -1,6 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @doc
-%%% MCP Server Handler for em_disco
+%%% @doc MCP Streamable HTTP handler for em_disco.
 %%%
 %%% Implements the Model Context Protocol (MCP) Streamable HTTP
 %%% transport (spec 2025-03-26) on a single /mcp endpoint.
@@ -29,7 +28,7 @@
 %%%
 %%%   search(query, capabilities?)
 %%%       Runs a query against connected Emergence agents.
-%%%       capabilities: optional array of strings to route only to
+%%%       `capabilities': optional array of strings to route only to
 %%%       matching agents. Omit for broadcast to all agents.
 %%%
 %%%   list_agents()
@@ -40,7 +39,6 @@
 %%%       Returns the deduplicated list of all capabilities currently
 %%%       offered by connected agents.
 %%%
-%%% @author Steve Roques
 %%% @end
 %%%-------------------------------------------------------------------
 -module(em_disco_mcp_handler).
@@ -78,7 +76,12 @@ init(Req0, State) ->
     end.
 
 %% @private
-%% GET /mcp — optional SSE channel for server notifications
+%% @doc Open an SSE stream and send the `endpoint' event.
+%%
+%% Required by the MCP Streamable HTTP spec to announce the POST
+%% endpoint to the client. The stream is closed immediately after —
+%% clients POST their JSON-RPC requests separately.
+%% @end
 handle(<<"GET">>, Req0, State) ->
     Req = cowboy_req:stream_reply(200, #{
         <<"content-type">>                 => <<"text/event-stream">>,
@@ -94,7 +97,13 @@ handle(<<"GET">>, Req0, State) ->
     cowboy_req:stream_body(<<>>, fin, Req),
     {ok, Req, State};
 
-%% POST /mcp — main JSON-RPC entrypoint
+%% @private
+%% @doc Parse the JSON-RPC body and dispatch.
+%%
+%% Checks the `Accept' header to decide the response mode: plain JSON
+%% (`application/json') or SSE (`text/event-stream'). Batch requests
+%% (JSON arrays) always use plain JSON regardless of `Accept'.
+%% @end
 handle(<<"POST">>, Req0, State) ->
     {ok, Body, Req1} = cowboy_req:read_body(Req0),
     Accept = cowboy_req:header(<<"accept">>, Req1, <<"application/json">>),
@@ -130,13 +139,16 @@ handle(_, Req0, State) ->
 %%====================================================================
 
 %% @private
-%% Plain JSON response — single request/response
+%% @doc Dispatch a single JSON-RPC request and reply with plain JSON.
+%% @end
 handle_json(Request, Req0, State) ->
     Response = dispatch(Request),
     reply_json(json:encode(Response), Req0, State).
 
 %% @private
-%% SSE response — stream one or more events then close
+%% @doc Dispatch a single JSON-RPC request and stream the response as
+%% a single SSE `message' event.
+%% @end
 handle_sse(Request, Req0, State) ->
     Req = cowboy_req:stream_reply(200, #{
         <<"content-type">>                => <<"text/event-stream">>,
@@ -149,6 +161,8 @@ handle_sse(Request, Req0, State) ->
     {ok, Req, State}.
 
 %% @private
+%% @doc Send a 200 JSON response with CORS headers.
+%% @end
 reply_json(Body, Req0, State) ->
     Req = cowboy_req:reply(200,
         #{<<"content-type">>                => <<"application/json">>,
@@ -273,6 +287,9 @@ call_tool(Id, Name, _Args) ->
 %%====================================================================
 
 %% @private
+%% @doc Return the MCP tool definitions for `search', `list_agents',
+%% and `list_capabilities'.
+%% @end
 tools_schema() ->
     [
         #{
@@ -366,6 +383,8 @@ caps_from_args(Args) ->
 %%====================================================================
 
 %% @private
+%% @doc Write a single `event: Event\ndata: Data\n\n' frame to the stream.
+%% @end
 send_sse(Req, Event, Data) ->
     Frame = <<"event: ", Event/binary, "\ndata: ", Data/binary, "\n\n">>,
     cowboy_req:stream_body(Frame, nofin, Req).
@@ -375,6 +394,9 @@ send_sse(Req, Event, Data) ->
 %%====================================================================
 
 %% @private
+%% @doc Return CORS headers allowing all origins, GET/POST/OPTIONS
+%% methods, and content-type/accept/authorization request headers.
+%% @end
 cors_headers() ->
     #{<<"access-control-allow-origin">>  => <<"*">>,
       <<"access-control-allow-methods">> => <<"GET, POST, OPTIONS">>,
