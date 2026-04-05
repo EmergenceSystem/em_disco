@@ -27,7 +27,6 @@
 %%% Returns HTTP 200 with an empty `agents' list when no agents are
 %%% connected. Never returns an error under normal operation.
 %%%
-%%% @author Steve Roques
 %%% @end
 %%%-------------------------------------------------------------------
 -module(em_disco_registry_handler).

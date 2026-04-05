@@ -31,7 +31,6 @@
 %%% `em_disco:query/1' sends `{send, Payload}' to every registered
 %%% handler pid. The handler forwards it to the agent as a WS text frame.
 %%%
-%%% @author Steve Roques
 %%% @end
 %%%-------------------------------------------------------------------
 -module(em_disco_handlers).
