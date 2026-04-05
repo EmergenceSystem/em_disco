@@ -51,4 +51,3 @@ mnesia_test_data/
 
 # Claude Code
 .claude/
-docs/
