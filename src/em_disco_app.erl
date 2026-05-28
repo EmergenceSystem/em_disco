@@ -1,37 +1,79 @@
 %%%-------------------------------------------------------------------
-%%% @doc em_disco OTP application callback module.
+%%% @doc em_disco OTP application callback.
 %%%
-%%% Entry point for the em_disco application. Delegates startup to
-%%% {@link em_disco_sup}, which initialises ETS tables and starts the
-%%% Cowboy HTTP/WebSocket listener.
+%%% Starts the supervisor, then wires the em_pop gossip node and the
+%%% Cowboy /agent/query listener. Both are started after the supervisor
+%%% is running because they are managed by external processes:
+%%%   - em_pop_sup (a child of em_filter_sup) owns the gossip node.
+%%%   - Ranch (started by Cowboy) owns the HTTP listener.
+%%%
+%%% Configuration keys read from the `em_disco' application env:
+%%%   gossip_port  (default 9100) — em_pop TCP gossip listener port
+%%%   query_port   (default 9101) — /agent/query HTTP listener port
+%%%   pop_seeds    (default [])   — [{Host, Port}] bootstrap peers
+%%%
 %%% @end
 %%%-------------------------------------------------------------------
 -module(em_disco_app).
 -behaviour(application).
-
 -export([start/2, stop/1]).
 
-%%--------------------------------------------------------------------
-%% @doc Start the em_disco application.
-%%
-%% Called automatically by the OTP application controller.
-%% Delegates to {@link em_disco_sup:start_link/0}.
-%% @end
-%%--------------------------------------------------------------------
 -spec start(application:start_type(), term()) -> {ok, pid()} | {error, term()}.
-start(_StartType, _StartArgs) ->
-    logger:add_primary_filter(no_progress,
-        {fun logger_filters:progress/2, stop}),
-    em_disco_sup:start_link().
+start(_Type, _Args) ->
+    case em_disco_sup:start_link() of
+        {ok, Pid} ->
+            ok = start_pop_and_http(),
+            {ok, Pid};
+        Error ->
+            Error
+    end.
 
-%%--------------------------------------------------------------------
-%% @doc Stop the em_disco application.
-%%
-%% Stops the Cowboy listener. Called automatically by the OTP
-%% application controller after the supervision tree has been shut down.
-%% @end
-%%--------------------------------------------------------------------
 -spec stop(term()) -> ok.
 stop(_State) ->
-    cowboy:stop_listener(disco_listener),
+    catch cowboy:stop_listener(em_disco_query_listener),
+    catch em_pop_sup:stop_node(disco),
+    ok.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc Start the em_pop gossip node and the Cowboy HTTP listener.
+%%
+%% Called from start/2 after the supervisor is running.
+%% Cleans up any stale state from a previous run first.
+%% @end
+%%--------------------------------------------------------------------
+-spec start_pop_and_http() -> ok.
+start_pop_and_http() ->
+    GossipPort = application:get_env(em_disco, gossip_port, 9100),
+    QueryPort  = application:get_env(em_disco, query_port,  9101),
+    Seeds      = application:get_env(em_disco, pop_seeds,   []),
+    Vec        = em_filter_vec:from_capabilities([<<"bootstrap">>, <<"registry">>]),
+
+    %% Clean up stale state (supervisor restart scenario).
+    catch em_pop_sup:stop_node(disco),
+    catch cowboy:stop_listener(em_disco_query_listener),
+
+    %% Start em_pop gossip node with a 10 000-peer table.
+    {ok, PopPid} = em_pop_sup:start_node(disco, #{
+        port            => GossipPort,
+        vector          => Vec,
+        max_peers       => 10_000,
+        gossip_interval => 5_000
+    }),
+
+    %% Contact bootstrap peers (fire-and-forget; errors are harmless).
+    lists:foreach(fun({H, P}) ->
+        catch em_pop_node:add_peer(PopPid, H, P)
+    end, Seeds),
+
+    %% Start the direct-query Cowboy listener.
+    Dispatch = cowboy_router:compile([
+        {'_', [{"/agent/query", em_disco_query_handler, #{}}]}
+    ]),
+    {ok, _} = cowboy:start_clear(em_disco_query_listener,
+                                  [{port, QueryPort}],
+                                  #{env => #{dispatch => Dispatch}}),
+
+    logger:notice("[em_disco] gossip port ~w  query port ~w",
+                  [GossipPort, QueryPort]),
     ok.

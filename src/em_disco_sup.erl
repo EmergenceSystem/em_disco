@@ -1,103 +1,21 @@
 %%%-------------------------------------------------------------------
 %%% @doc em_disco top-level supervisor.
 %%%
-%%% Initialises three ETS tables shared across the application:
-%%% <ul>
-%%%   <li>`agent_registry'  — connected agents, maintained by
-%%%       {@link em_disco_handlers}</li>
-%%%   <li>`pending_queries' — in-flight query correlations, maintained
-%%%       by {@link em_disco}</li>
-%%%   <li>`rate_buckets'    — per-IP token buckets, maintained by
-%%%       {@link em_disco_rate}</li>
-%%% </ul>
-%%%
-%%% Starts the Cowboy HTTP listener on the configured port and
-%%% supervises two workers: {@link em_disco_sse_registry} and
-%%% {@link em_disco_rate}.
-%%%
-%%% === HTTP routes (default port 8080) ===
-%%%
-%%%   GET  /                   → index.html landing page (registry UI)
-%%%   GET  /ws                 → em_disco_handlers (WebSocket, agents)
-%%%   POST /query              → em_disco_http_handler (HTTP queries)
-%%%   GET  /registry           → em_disco_registry_handler (agent list JSON)
-%%%   GET  /registry/events    → em_disco_registry_events_handler (SSE push)
-%%%   GET  /mcp, POST /mcp     → em_disco_mcp_handler (MCP Streamable HTTP)
+%%% Empty one_for_one supervisor. The em_pop gossip node and the
+%%% Cowboy HTTP listener are started by em_disco_app:start/2 after
+%%% this supervisor is running, because they are managed externally
+%%% (em_pop_sup owns the gossip node; Ranch owns the listener).
 %%%
 %%% @end
 %%%-------------------------------------------------------------------
 -module(em_disco_sup).
 -behaviour(supervisor).
-
 -export([start_link/0, init/1]).
 
-%%--------------------------------------------------------------------
-%% @doc Start the top-level supervisor.
-%% @end
-%%--------------------------------------------------------------------
 -spec start_link() -> {ok, pid()} | {error, term()}.
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
-%%--------------------------------------------------------------------
-%% @doc Supervisor initialisation callback.
-%%
-%% Creates the `agent_registry', `pending_queries', and `rate_buckets'
-%% ETS tables, starts the Cowboy HTTP listener, then starts the
-%% `em_disco_sse_registry' and `em_disco_rate' worker processes.
-%% @end
-%%--------------------------------------------------------------------
 -spec init([]) -> {ok, {supervisor:sup_flags(), [supervisor:child_spec()]}}.
 init([]) ->
-    ets:new(agent_registry,  [set, named_table, public, {read_concurrency, true}]),
-    ets:new(pending_queries, [set, named_table, public]),
-    ets:new(rate_buckets,    [set, named_table, public]),
-
-    Port = get_port(),
-
-    Dispatch = cowboy_router:compile([
-        {'_', [
-            {"/",         cowboy_static,
-                          {priv_file, em_disco, "templates/index.html"}},
-            {"/ws",       em_disco_handlers,         []},
-            {"/query",    em_disco_http_handler,     []},
-            {"/registry",        em_disco_registry_handler,        []},
-            {"/registry/events", em_disco_registry_events_handler, []},
-            {"/mcp",             em_disco_mcp_handler,             []}
-        ]}
-    ]),
-
-    {ok, _} = cowboy:start_clear(disco_listener,
-        [{port, Port}],
-        #{env => #{dispatch => Dispatch}}
-    ),
-
-    ActualPort = ranch:get_port(disco_listener),
-    logger:info("em_disco started", #{port => ActualPort}),
-
-    Children = [
-        #{id => em_disco_sse_registry,
-          start => {em_disco_sse_registry, start_link, []},
-          restart => permanent,
-          type => worker},
-        #{id => em_disco_rate,
-          start => {em_disco_rate, start_link, []},
-          restart => permanent,
-          type => worker}
-    ],
-    {ok, {#{strategy => one_for_one, intensity => 5, period => 10}, Children}}.
-
-%% @private
-%%--------------------------------------------------------------------
-%% @doc Resolve the HTTP port from environment variable or application config.
-%%
-%% `EM_DISCO_PORT' environment variable overrides `{port, N}' in
-%% sys.config. Defaults to 8080.
-%% @end
-%%--------------------------------------------------------------------
--spec get_port() -> non_neg_integer().
-get_port() ->
-    case os:getenv("EM_DISCO_PORT") of
-        false -> application:get_env(em_disco, port, 8080);
-        Val   -> list_to_integer(Val)
-    end.
+    {ok, {#{strategy => one_for_one, intensity => 3, period => 10}, []}}.

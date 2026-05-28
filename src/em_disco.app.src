@@ -1,16 +1,24 @@
 {application, em_disco, [
-    {description, "Discovery service for filters (Embryo)"},
-    {vsn, "0.1.0"},
-    {registered, []},
+    {description, "em_disco — Population Protocol super-node for peer discovery"},
+    {vsn, "1.0.0"},
+    {registered, [em_disco_sup]},
     {mod, {em_disco_app, []}},
     {applications, [
         kernel,
         stdlib,
         cowboy,
-        jose
+        em_filter
     ]},
-    {env, []},
-    {modules, []},
+    {env, [
+        {gossip_port, 9100},
+        {query_port,  9101},
+        {pop_seeds,   []}
+    ]},
+    {modules, [
+        em_disco_app,
+        em_disco_sup,
+        em_disco_query_handler
+    ]},
     {licenses, ["Apache 2.0"]},
-    {links, []}
+    {links, [{"GitHub", "https://github.com/EmergenceSystem/em_disco"}]}
 ]}.
