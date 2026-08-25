@@ -50,6 +50,8 @@ start_pop() ->
     %% Start em_pop gossip node with a 10 000-peer table.
     {ok, PopPid} = em_pop_sup:start_node(disco, #{
         port            => GossipPort,
+        advertise_host  => list_to_binary(os:getenv("EM_POP_ADVERTISE_HOST", "localhost")),
+        advertise_port  => list_to_integer(os:getenv("EM_POP_ADVERTISE_PORT", integer_to_list(GossipPort))),
         vector          => Vec,
         max_peers       => 10_000,
         gossip_interval => 5_000
