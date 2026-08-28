@@ -53,8 +53,15 @@ start_pop() ->
         advertise_host  => list_to_binary(os:getenv("EM_POP_ADVERTISE_HOST", "localhost")),
         advertise_port  => list_to_integer(os:getenv("EM_POP_ADVERTISE_PORT", integer_to_list(GossipPort))),
         vector          => Vec,
+        role            => hub,
+        public_host     => case os:getenv("EM_POP_PUBLIC_HOST") of
+                               false -> undefined;
+                               ""    -> undefined;
+                               PH    -> list_to_binary(PH)
+                           end,
         max_peers       => 10_000,
-        gossip_interval => 5_000
+        gossip_interval => 5_000,
+        seeds           => Seeds
     }),
 
     %% Contact bootstrap peers (fire-and-forget; errors are harmless).
