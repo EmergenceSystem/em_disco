@@ -61,7 +61,8 @@ start_pop() ->
                            end,
         max_peers       => 10_000,
         gossip_interval => 5_000,
-        seeds           => Seeds
+        seeds           => Seeds,
+        ban_authority_pubkeys => [ base64:decode(B) || B <- application:get_env(em_disco, ban_authority_pubkeys, []) ]
     }),
 
     %% Contact bootstrap peers (fire-and-forget; errors are harmless).
