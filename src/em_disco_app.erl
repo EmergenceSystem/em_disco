@@ -85,6 +85,7 @@ start_pop() ->
 %%
 %% Mounts:
 %%   POST /pop/gossip — em_pop gossip handler (em_pop_http, em_filter)
+%%   GET  /ws/filter   — WebSocket ingress for filters (em_disco_ws)
 %%   GET  /health      — trivial liveness check (em_disco_health)
 %% @end
 %%--------------------------------------------------------------------
@@ -95,6 +96,7 @@ start_http() ->
     Dispatch = cowboy_router:compile([{'_', [
         {"/pop/gossip", em_pop_http, #{node => NodePid}},
         {"/relay/query", em_disco_relay, #{}},
+        {"/ws/filter", em_disco_ws, #{node => NodePid}},
         {"/health", em_disco_health, #{}}
     ]}]),
     {ok, _} = cowboy:start_clear(em_disco_http,
