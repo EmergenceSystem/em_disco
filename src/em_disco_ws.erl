@@ -11,6 +11,12 @@
 %%% forwarded to `em_disco_relay:deliver/2', and `relay_query'
 %%% messages from `em_disco_relay' are pushed to the peer as `query'
 %%% frames.
+%%%
+%%% Abuse control: `init/2' checks a per-source token bucket
+%%% (`em_disco_ratelimit') before allowing the WS upgrade, keyed on the
+%%% `cf-connecting-ip' header when present (Cloudflare tunnel), falling
+%%% back to the raw socket peer address otherwise. A source over budget
+%%% gets a plain HTTP 429 instead of the upgrade.
 %%% @end
 %%%-------------------------------------------------------------------
 -module(em_disco_ws).
@@ -19,8 +25,34 @@
 -export([init/2, websocket_init/1, websocket_handle/2,
          websocket_info/2, terminate/3]).
 
+%% Connection rate limit: N upgrades per source IP per window.
+-define(CONN_RATE_CAPACITY, 5).
+-define(CONN_RATE_WINDOW_SECONDS, 60).
+
 init(Req, State) ->
-    {cowboy_websocket, Req, State, #{idle_timeout => 60_000}}.
+    Peer = peer_key(Req),
+    case em_disco_ratelimit:allow(Peer, ?CONN_RATE_CAPACITY, ?CONN_RATE_WINDOW_SECONDS) of
+        true ->
+            {cowboy_websocket, Req, State, #{idle_timeout => 60_000}};
+        false ->
+            Req2 = cowboy_req:reply(429,
+                     #{<<"content-type">> => <<"text/plain">>},
+                     <<"rate_limited">>, Req),
+            {ok, Req2, State}
+    end.
+
+%% @private Rate-limit bucket key for a connecting socket: prefer the
+%% `cf-connecting-ip' header (set by the Cloudflare tunnel, so behind
+%% the tunnel this is the real client IP rather than the tunnel's own
+%% address), falling back to `cowboy_req:peer/1'.
+-spec peer_key(cowboy_req:req()) -> binary().
+peer_key(Req) ->
+    case cowboy_req:header(<<"cf-connecting-ip">>, Req, undefined) of
+        undefined ->
+            {IP, _Port} = cowboy_req:peer(Req),
+            list_to_binary(inet:ntoa(IP));
+        CfIp -> CfIp
+    end.
 
 websocket_init(State) ->
     {ok, State#{id => undefined}}.

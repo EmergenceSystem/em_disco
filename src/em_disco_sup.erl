@@ -19,6 +19,10 @@ start_link() ->
 
 -spec init([]) -> {ok, {supervisor:sup_flags(), [supervisor:child_spec()]}}.
 init([]) ->
+    %% Create the WS-ingress rate-limit ETS table now, in the
+    %% supervisor process, so it outlives individual connections
+    %% (mirrors emquest_ratelimit:init/0 in Emquest's supervisor).
+    em_disco_ratelimit:init(),
     {ok, {#{strategy => one_for_one, intensity => 3, period => 10},
           [#{id => em_disco_registry, start => {em_disco_registry, start_link, []}},
            #{id => em_disco_relay, start => {em_disco_relay, start_link, []}}]}}.

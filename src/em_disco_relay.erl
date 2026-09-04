@@ -13,6 +13,11 @@
 %%% awaits `{relay_result, QId, R}` for up to `TimeoutMs`. The WS
 %%% handler (em_disco_ws, Task 1.3) calls `deliver/2` when a result
 %%% frame arrives from the filter.
+%%%
+%%% Abuse control: at most `?MAX_INFLIGHT_PER_PEER` queries may be
+%%% in flight for a given peer at once; a query issued while a peer is
+%%% already at that cap is refused with `{error, too_many_inflight}'
+%%% (surfaced as HTTP 429) instead of being queued.
 %%% @end
 %%%-------------------------------------------------------------------
 -module(em_disco_relay).
@@ -24,23 +29,28 @@
 -export([start_link/0, query/3, deliver/2]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
+-define(MAX_INFLIGHT_PER_PEER, 8).
+
 -spec start_link() -> {ok, pid()} | {error, term()}.
 start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 %% @doc Synchronous: push a query into the peer's WS and await its result.
 -spec query(term(), term(), non_neg_integer()) ->
-    {ok, term()} | {error, not_found | timeout}.
+    {ok, term()} | {error, not_found | timeout | too_many_inflight}.
 query(PeerId, Query, TimeoutMs) ->
     case em_disco_registry:lookup(PeerId) of
         {ok, WsPid} ->
-            QId = base64:encode(crypto:strong_rand_bytes(9)),
-            gen_server:call(?MODULE, {await, QId, self()}),
-            WsPid ! {relay_query, QId, Query},
-            receive
-                {relay_result, QId, R} -> {ok, R}
-            after TimeoutMs ->
-                gen_server:cast(?MODULE, {cancel, QId}),
-                {error, timeout}
+            case gen_server:call(?MODULE, {await, PeerId, self()}) of
+                {ok, QId} ->
+                    WsPid ! {relay_query, QId, Query},
+                    receive
+                        {relay_result, QId, R} -> {ok, R}
+                    after TimeoutMs ->
+                        gen_server:cast(?MODULE, {cancel, QId}),
+                        {error, timeout}
+                    end;
+                {error, too_many_inflight} ->
+                    {error, too_many_inflight}
             end;
         error -> {error, not_found}
     end.
@@ -49,22 +59,50 @@ query(PeerId, Query, TimeoutMs) ->
 -spec deliver(term(), term()) -> ok.
 deliver(QId, Result) -> gen_server:cast(?MODULE, {deliver, QId, Result}).
 
-init([]) -> {ok, #{waiters => #{}}}.
+init([]) -> {ok, #{waiters => #{}, inflight => #{}}}.
 
-handle_call({await, QId, Pid}, _F, #{waiters := W} = S) ->
-    {reply, ok, S#{waiters => W#{QId => Pid}}};
+%% @private Register a new in-flight query for PeerId, refusing when
+%% the peer is already at the concurrency cap. Waiters map QId to
+%% {CallerPid, PeerId} so deliver/cancel can decrement the right
+%% peer's counter.
+handle_call({await, PeerId, Pid}, _F, #{waiters := W, inflight := I} = S) ->
+    Count = maps:get(PeerId, I, 0),
+    case Count >= ?MAX_INFLIGHT_PER_PEER of
+        true ->
+            {reply, {error, too_many_inflight}, S};
+        false ->
+            QId = base64:encode(crypto:strong_rand_bytes(9)),
+            {reply, {ok, QId},
+             S#{waiters => W#{QId => {Pid, PeerId}},
+                inflight => I#{PeerId => Count + 1}}}
+    end;
 handle_call(_R, _F, S) -> {reply, ok, S}.
 
-handle_cast({deliver, QId, R}, #{waiters := W} = S) ->
+handle_cast({deliver, QId, R}, #{waiters := W, inflight := I} = S) ->
     case maps:take(QId, W) of
-        {Pid, W2} -> Pid ! {relay_result, QId, R}, {noreply, S#{waiters => W2}};
-        error     -> {noreply, S}
+        {{Pid, PeerId}, W2} ->
+            Pid ! {relay_result, QId, R},
+            {noreply, S#{waiters => W2, inflight => decr_inflight(PeerId, I)}};
+        error -> {noreply, S}
     end;
-handle_cast({cancel, QId}, #{waiters := W} = S) ->
-    {noreply, S#{waiters => maps:remove(QId, W)}};
+handle_cast({cancel, QId}, #{waiters := W, inflight := I} = S) ->
+    case maps:take(QId, W) of
+        {{_Pid, PeerId}, W2} ->
+            {noreply, S#{waiters => W2, inflight => decr_inflight(PeerId, I)}};
+        error ->
+            {noreply, S}
+    end;
 handle_cast(_M, S) -> {noreply, S}.
 
 handle_info(_I, S) -> {noreply, S}.
+
+%% @private
+-spec decr_inflight(term(), map()) -> map().
+decr_inflight(PeerId, I) ->
+    case maps:get(PeerId, I, 0) - 1 of
+        N when N =< 0 -> maps:remove(PeerId, I);
+        N -> I#{PeerId => N}
+    end.
 
 %%--------------------------------------------------------------------
 %% Cowboy HTTP handler: POST /relay/query {"peer_id":.., "query":..}
@@ -81,7 +119,9 @@ init(Req0, State) ->
                 {error, not_found} ->
                     reply_json(404, #{<<"error">> => <<"unknown_peer">>}, Req1, State);
                 {error, timeout} ->
-                    reply_json(504, #{<<"error">> => <<"relay_timeout">>}, Req1, State)
+                    reply_json(504, #{<<"error">> => <<"relay_timeout">>}, Req1, State);
+                {error, too_many_inflight} ->
+                    reply_json(429, #{<<"error">> => <<"too_many_inflight">>}, Req1, State)
             end;
         _ ->
             reply_json(400, #{<<"error">> => <<"bad_request">>}, Req1, State)
