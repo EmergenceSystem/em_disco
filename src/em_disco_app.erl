@@ -94,6 +94,7 @@ start_http() ->
     NodePid = em_pop_sup:get_node(disco),
     Dispatch = cowboy_router:compile([{'_', [
         {"/pop/gossip", em_pop_http, #{node => NodePid}},
+        {"/relay/query", em_disco_relay, #{}},
         {"/health", em_disco_health, #{}}
     ]}]),
     {ok, _} = cowboy:start_clear(em_disco_http,

@@ -20,4 +20,5 @@ start_link() ->
 -spec init([]) -> {ok, {supervisor:sup_flags(), [supervisor:child_spec()]}}.
 init([]) ->
     {ok, {#{strategy => one_for_one, intensity => 3, period => 10},
-          [#{id => em_disco_registry, start => {em_disco_registry, start_link, []}}]}}.
+          [#{id => em_disco_registry, start => {em_disco_registry, start_link, []}},
+           #{id => em_disco_relay, start => {em_disco_relay, start_link, []}}]}}.

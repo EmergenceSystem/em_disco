@@ -17,7 +17,8 @@
     {modules, [
         em_disco_app,
         em_disco_sup,
-        em_disco_health
+        em_disco_health,
+        em_disco_relay
     ]},
     {licenses, ["Apache 2.0"]},
     {links, [{"GitHub", "https://github.com/EmergenceSystem/em_disco"}]}
