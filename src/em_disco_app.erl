@@ -1,13 +1,14 @@
 %%%-------------------------------------------------------------------
 %%% @doc em_disco OTP application callback.
 %%%
-%%% Starts the supervisor, then wires the em_pop gossip node.
-%%% em_disco is a pure gossip seed: it maintains a large peer table
-%%% for network discovery but serves no HTTP.
+%%% Starts the supervisor, wires the em_pop gossip node, then mounts
+%%% the Cowboy HTTP listener that exposes the gossip endpoint over
+%%% HTTP (in addition to the raw em_pop TCP gossip listener).
 %%%
 %%% Configuration keys read from the `em_disco' application env:
 %%%   gossip_port  (default 9100) — em_pop TCP gossip listener port
 %%%   pop_seeds    (default [])   — [{Host, Port}] bootstrap peers
+%%%   http_port    (default 9080) — Cowboy HTTP listener port
 %%%
 %%% @end
 %%%-------------------------------------------------------------------
@@ -20,6 +21,7 @@ start(_Type, _Args) ->
     case em_disco_sup:start_link() of
         {ok, Pid} ->
             ok = start_pop(),
+            ok = start_http(),
             {ok, Pid};
         Error ->
             Error
@@ -71,4 +73,30 @@ start_pop() ->
     end, Seeds),
 
     logger:notice("[em_disco] gossip port ~w", [GossipPort]),
+    ok.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc Start the Cowboy HTTP listener.
+%%
+%% Called from start/2 after start_pop/0, so the em_pop gossip node
+%% for the `disco' agent name is already running and its pid can be
+%% baked into the `/pop/gossip' route options.
+%%
+%% Mounts:
+%%   POST /pop/gossip — em_pop gossip handler (em_pop_http, em_filter)
+%%   GET  /health      — trivial liveness check (em_disco_health)
+%% @end
+%%--------------------------------------------------------------------
+-spec start_http() -> ok.
+start_http() ->
+    Port    = application:get_env(em_disco, http_port, 9080),
+    NodePid = em_pop_sup:get_node(disco),
+    Dispatch = cowboy_router:compile([{'_', [
+        {"/pop/gossip", em_pop_http, #{node => NodePid}},
+        {"/health", em_disco_health, #{}}
+    ]}]),
+    {ok, _} = cowboy:start_clear(em_disco_http,
+        [{port, Port}], #{env => #{dispatch => Dispatch}}),
+    logger:notice("[em_disco] http port ~w", [Port]),
     ok.
