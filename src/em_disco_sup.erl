@@ -1,10 +1,11 @@
 %%%-------------------------------------------------------------------
 %%% @doc em_disco top-level supervisor.
 %%%
-%%% Empty one_for_one supervisor. The em_pop gossip node and the
-%%% Cowboy HTTP listener are started by em_disco_app:start/2 after
-%%% this supervisor is running, because they are managed externally
-%%% (em_pop_sup owns the gossip node; Ranch owns the listener).
+%%% Owns the WS-filter registry (peer_id -> ws_pid). The em_pop
+%%% gossip node and the Cowboy HTTP listener are started by
+%%% em_disco_app:start/2 after this supervisor is running, because
+%%% they are managed externally (em_pop_sup owns the gossip node;
+%%% Ranch owns the listener).
 %%%
 %%% @end
 %%%-------------------------------------------------------------------
@@ -18,4 +19,5 @@ start_link() ->
 
 -spec init([]) -> {ok, {supervisor:sup_flags(), [supervisor:child_spec()]}}.
 init([]) ->
-    {ok, {#{strategy => one_for_one, intensity => 3, period => 10}, []}}.
+    {ok, {#{strategy => one_for_one, intensity => 3, period => 10},
+          [#{id => em_disco_registry, start => {em_disco_registry, start_link, []}}]}}.
