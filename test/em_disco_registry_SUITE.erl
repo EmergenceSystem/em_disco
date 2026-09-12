@@ -16,7 +16,11 @@ all() -> [register_lookup_unregister].
 init_per_suite(C) ->
     {ok, Pid} = em_disco_registry:start_link(),
     unlink(Pid),
-    C.
+    [{registry_pid, Pid} | C].
+
+end_per_suite(C) ->
+    gen_server:stop(proplists:get_value(registry_pid, C)),
+    ok.
 
 register_lookup_unregister(_) ->
     Id = <<"abc">>, Self = self(),

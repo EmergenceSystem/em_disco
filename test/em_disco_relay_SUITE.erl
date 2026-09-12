@@ -15,7 +15,12 @@ init_per_suite(C) ->
     unlink(RegPid),
     {ok, RelayPid} = em_disco_relay:start_link(),
     unlink(RelayPid),
-    C.
+    [{registry_pid, RegPid}, {relay_pid, RelayPid} | C].
+
+end_per_suite(C) ->
+    gen_server:stop(proplists:get_value(relay_pid, C)),
+    gen_server:stop(proplists:get_value(registry_pid, C)),
+    ok.
 
 relay_roundtrip(_) ->
     Id = <<"peer1">>,
