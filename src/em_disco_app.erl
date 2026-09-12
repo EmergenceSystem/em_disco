@@ -29,6 +29,7 @@ start(_Type, _Args) ->
 
 -spec stop(term()) -> ok.
 stop(_State) ->
+    catch cowboy:stop_listener(em_disco_http),
     catch em_pop_sup:stop_node(disco),
     ok.
 
