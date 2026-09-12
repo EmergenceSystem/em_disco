@@ -71,7 +71,8 @@ websocket_handle({text, Data}, #{id := undefined, node := Node} = S) ->
             case Ok of
                 true ->
                     Caps = maps:get(<<"capabilities">>, M, []),
-                    ok = em_disco_registry:register(Id, self()),
+                    ok = em_disco_registry:register(Id, self(),
+                            #{name => Name, capabilities => Caps}),
                     %% Inject a relay peer into the gossip node.
                     em_pop_node:add_relay_peer(Node, #{
                         id => Id, name => Name, pubkey => Pub,
