@@ -87,6 +87,7 @@ start_pop() ->
 %%   POST /pop/gossip — em_pop gossip handler (em_pop_http, em_filter)
 %%   GET  /ws/filter   — WebSocket ingress for filters (em_disco_ws)
 %%   GET  /health      — trivial liveness check (em_disco_health)
+%%   *    /mcp         — MCP Streamable HTTP endpoint (em_disco_mcp_handler)
 %% @end
 %%--------------------------------------------------------------------
 -spec start_http() -> ok.
@@ -97,7 +98,8 @@ start_http() ->
         {"/pop/gossip", em_pop_http, #{node => NodePid}},
         {"/relay/query", em_disco_relay, #{}},
         {"/ws/filter", em_disco_ws, #{node => NodePid}},
-        {"/health", em_disco_health, #{}}
+        {"/health", em_disco_health, #{}},
+        {"/mcp", em_disco_mcp_handler, #{}}
     ]}]),
     {ok, _} = cowboy:start_clear(em_disco_http,
         [{port, Port}], #{env => #{dispatch => Dispatch}}),

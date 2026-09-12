@@ -27,7 +27,8 @@ relay_roundtrip(_) ->
                   <<"signature">> => <<"sig">>}),
             F()
         end end),
-    ok = em_disco_registry:register(Id, Filter),
+    ok = em_disco_registry:register(Id, Filter,
+            #{name => <<"filter1">>, capabilities => [<<"search">>]}),
     {ok, Resp} = em_disco_relay:query(Id, <<"hello">>, 2000),
     #{<<"signer_id">> := <<"s">>} = Resp,
     ok = em_disco_registry:unregister(Id).

@@ -20,7 +20,10 @@ init_per_suite(C) ->
 
 register_lookup_unregister(_) ->
     Id = <<"abc">>, Self = self(),
-    ok = em_disco_registry:register(Id, Self),
+    Info = #{name => <<"filter1">>, capabilities => [<<"search">>]},
+    ok = em_disco_registry:register(Id, Self, Info),
     {ok, Self} = em_disco_registry:lookup(Id),
+    [{Id, Info}] = em_disco_registry:list(),
     ok = em_disco_registry:unregister(Id),
-    error = em_disco_registry:lookup(Id).
+    error = em_disco_registry:lookup(Id),
+    [] = em_disco_registry:list().
