@@ -96,7 +96,10 @@ start_http() ->
     Port    = application:get_env(em_disco, http_port, 9080),
     NodePid = em_pop_sup:get_node(disco),
     Dispatch = cowboy_router:compile([{'_', [
-        {"/pop/gossip", em_pop_http, #{node => NodePid}},
+        {"/pop/gossip", em_pop_http, #{node       => NodePid,
+                                       rate_limit => {em_disco_ratelimit, allow, 30, 60},
+                                       max_body   => 262144,
+                                       max_peers  => 512}},
         {"/relay/query", em_disco_relay, #{}},
         {"/ws/filter", em_disco_ws, #{node => NodePid}},
         {"/health", em_disco_health, #{}},
